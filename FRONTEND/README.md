@@ -1,6 +1,6 @@
 # ShopHub E-Commerce Frontend
 
-React + Vite + Tailwind CSS + shadcn/ui-style components + Axios + React Router.
+React + TypeScript + Vite + Tailwind CSS + Axios + React Router.
 
 ## 1. Start the FastAPI backend
 
@@ -50,6 +50,29 @@ Copy-Item .env.example .env
 - Current user from `GET /api/auth/me`
 - FastAPI CORS configuration
 - Product image URL support through FastAPI static files
+
+## Type safety and tests
+
+- The app source is TypeScript (`.ts`/`.tsx`) with strict type-checking enabled.
+- Shared API request/response contracts are defined in `src/types.ts` to match
+  the FastAPI schemas and route response shapes.
+- Vitest and React Testing Library test catalog filtering, request failures, and
+  optimistic cart removal. MSW intercepts API calls so component tests do not
+  depend on a running backend.
+- Playwright runs a mocked browser journey covering product discovery, login,
+  adding an item, and checkout.
+- The `Frontend CI` workflow runs type-checking, component tests, a production
+  build, and Chromium E2E tests for frontend changes.
+
+From `FRONTEND`, run:
+
+```powershell
+npm run typecheck
+npm test
+npm run build
+npx playwright install chromium
+npm run test:e2e
+```
 
 ## State and data architecture
 

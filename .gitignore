@@ -7,3 +7,6 @@ BACKEND/.pytest_cache/
 FRONTEND/node_modules/
 FRONTEND/dist/
 FRONTEND/.env.local
+FRONTEND/test-results/
+FRONTEND/playwright-report/
+FRONTEND/playwright/.cache/
