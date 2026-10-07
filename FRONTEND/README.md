@@ -51,16 +51,37 @@ Copy-Item .env.example .env
 - FastAPI CORS configuration
 - Product image URL support through FastAPI static files
 
+## Storefront features
+
+- Zustand provides the shared cart snapshot and cart actions; TanStack Query
+  keeps cart contents synchronized with the FastAPI cart endpoints.
+- Checkout is a protected route with a React Hook Form form and Zod validation
+  for the delivery address. Orders are submitted to the backend and successful
+  checkout clears and invalidates the cart cache.
+- Order history and order details use cached queries; administrators can list
+  all orders and cancel confirmed orders.
+- The admin area supports product creation, editing, image upload, deletion,
+  and order management against the FastAPI admin endpoints.
+- The navigation theme control switches between light and dark modes and
+  remembers the user's choice in local storage.
+- TanStack Query coordinates catalog, admin product, cart, and order data with
+  cache invalidation after mutations.
+
 ## Type safety and tests
 
 - The app source is TypeScript (`.ts`/`.tsx`) with strict type-checking enabled.
 - Shared API request/response contracts are defined in `src/types.ts` to match
   the FastAPI schemas and route response shapes.
 - Vitest and React Testing Library test catalog filtering, request failures, and
-  optimistic cart removal. MSW intercepts API calls so component tests do not
+  optimistic cart removal, checkout validation and errors, order placement,
+  and theme switching. MSW intercepts API calls so component tests do not
   depend on a running backend.
 - Playwright runs a mocked browser journey covering product discovery, login,
-  adding an item, and checkout.
+  adding an item, and checkout. Local E2E runs open Chromium in headed mode,
+  slow browser actions so UI changes are visible, and run one test at a time.
+  The suite is organized into exactly two E2E files with 10 tests each:
+  `e2e/login.spec.ts` covers login, and `e2e/pages.spec.ts` covers the storefront
+  and other application pages. CI stays headless and can run tests in parallel.
 - The `Frontend CI` workflow runs type-checking, component tests, a production
   build, and Chromium E2E tests for frontend changes.
 
@@ -73,6 +94,11 @@ npm run build
 npx playwright install chromium
 npm run test:e2e
 ```
+
+`npm run test:e2e` opens a visible Chromium window locally while the terminal
+reports test progress. Use `npx playwright test --ui` for Playwright's
+interactive test explorer, or `npx playwright test --debug` to step through a
+test with the Playwright Inspector.
 
 ## State and data architecture
 
@@ -148,6 +174,12 @@ initial document.
 | `/login` | Login |
 | `/register` | Register |
 | `/account` | Protected account page |
+| `/cart` | Protected server-backed shopping cart |
+| `/checkout` | Protected validated checkout |
+| `/orders` | Protected order history |
+| `/orders/:id` | Protected order details |
+| `/admin/products` | Admin product management |
+| `/admin/orders` | Admin order listing and management |
 
 ## Important
 

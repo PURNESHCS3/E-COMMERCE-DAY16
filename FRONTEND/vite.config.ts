@@ -24,5 +24,19 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
     },
+    build: {
+      rollupOptions: {
+        onwarn(warning, defaultHandler) {
+          const warningPath = warning.id?.replaceAll("\\", "/");
+          if (
+            warning.code === "INVALID_ANNOTATION" &&
+            warningPath?.includes("/node_modules/zod/v4/core/")
+          ) {
+            return;
+          }
+          defaultHandler(warning);
+        },
+      },
+    },
   };
 });

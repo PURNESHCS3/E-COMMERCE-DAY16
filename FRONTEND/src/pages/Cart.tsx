@@ -1,15 +1,9 @@
-import { useState } from "react";
-import type { FormEvent } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Button } from "../components/ui/button";
-import { createOrder } from "../services/orders";
 import { API_URL } from "../services/api";
 import { useAuth } from "../context/AuthContext";
-import { useCartStore } from "../stores/cartStore";
-import { cartItemsQueryKey, cartQueryKey, useCartItems, useCartQuery, useRemoveFromCart } from "../hooks/useCart";
+import { useCartItems, useCartQuery, useRemoveFromCart } from "../hooks/useCart";
 import { getApiErrorMessage } from "../lib/apiError";
-import type { CreateOrderResponse } from "../types";
 
 function imageSrc(url: string | null): string | null {
   if (!url) return null;
@@ -18,44 +12,15 @@ function imageSrc(url: string | null): string | null {
 
 export default function Cart() {
   const user = useAuth((state) => state.user);
-  const queryClient = useQueryClient();
   const cartQuery = useCartQuery(Boolean(user));
   const itemsQuery = useCartItems(cartQuery.data || {}, cartQuery.isSuccess);
   const removeMutation = useRemoveFromCart();
-  const setCart = useCartStore((state) => state.setCart);
-  const [orderError, setOrderError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [order, setOrder] = useState<CreateOrderResponse | null>(null);
-  const [deliveryAddress, setDeliveryAddress] = useState("");
 
   const items = itemsQuery.data || [];
-  const error = orderError ||
+  const error =
     (removeMutation.error ? getApiErrorMessage(removeMutation.error, "Could not remove this item.") : "") ||
     (cartQuery.error ? getApiErrorMessage(cartQuery.error, "Could not load your cart.") : "") ||
     (itemsQuery.error ? getApiErrorMessage(itemsQuery.error, "Could not load the products in your cart.") : "");
-
-  const checkout = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setOrderError("");
-    if (deliveryAddress.trim().length < 10) {
-      setOrderError("Enter a delivery address with at least 10 characters.");
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      setOrder(await createOrder(deliveryAddress.trim()));
-      setCart({});
-      queryClient.setQueryData(cartQueryKey, {});
-      queryClient.setQueryData(cartItemsQueryKey({}), []);
-      await queryClient.invalidateQueries({ queryKey: cartQueryKey });
-      setDeliveryAddress("");
-    } catch (err) {
-      setOrderError(getApiErrorMessage(err, "Could not place your order."));
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   const total = items.reduce(
     (sum, { product, quantity }) => sum + product.price * quantity,
@@ -70,12 +35,6 @@ export default function Cart() {
     <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
       <h1 className="mb-6 text-3xl font-bold">Your cart</h1>
       {error && <p role="alert" className="mb-5 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      {order && (
-        <p role="status" className="mb-5 rounded-lg bg-green-50 p-3 text-sm text-green-800">
-          Order #{order.order_id} placed. <Link className="underline" to={`/orders/${order.order_id}`}>View order</Link>
-        </p>
-      )}
-
       {items.length === 0 ? (
         <div className="border-y py-10 text-center text-slate-600">
           <p>Your cart is empty.</p>
@@ -115,30 +74,12 @@ export default function Cart() {
               </li>
             ))}
           </ul>
-          <form onSubmit={checkout} className="ml-auto mt-6 max-w-xl space-y-5">
-            <label className="block space-y-2 text-sm font-medium">
-              Delivery address
-              <textarea
-                value={deliveryAddress}
-                onChange={(event) => setDeliveryAddress(event.target.value)}
-                minLength={10}
-                maxLength={500}
-                rows={3}
-                required
-                placeholder="Street, city, state, postal code"
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
-              />
-              <span className="block text-xs font-normal text-slate-500">
-                Enter at least 10 characters. Used for this order only.
-              </span>
-            </label>
-            <div className="flex flex-wrap items-center justify-between gap-4 border-t pt-4">
-              <span className="text-lg font-semibold">Total ₹{total.toFixed(2)}</span>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Placing order..." : "Place order"}
-              </Button>
-            </div>
-          </form>
+          <div className="ml-auto mt-6 flex max-w-xl flex-wrap items-center justify-between gap-4 border-t pt-4">
+            <span className="text-lg font-semibold">Total ₹{total.toFixed(2)}</span>
+            <Link to="/checkout">
+              <Button>Proceed to checkout</Button>
+            </Link>
+          </div>
         </>
       )}
     </main>

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -16,39 +16,36 @@ const emptyForm = {
 
 export default function AdminProducts() {
   const queryClient = useQueryClient();
+  const productsQuery = useQuery({
+    queryKey: ["products", "admin"],
+    queryFn: () => getProducts(),
+  });
   const [searchParams] = useSearchParams();
   const editProductId = searchParams.get("edit");
-  const [products, setProducts] = useState<Product[]>([]);
+  const products = productsQuery.data || [];
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    getProducts()
-      .then((loadedProducts) => {
-        setProducts(loadedProducts);
-        const productToEdit = loadedProducts.find(
-          (product) => String(product.id) === editProductId
-        );
+    if (!editProductId || !productsQuery.data) return;
+    const productToEdit = productsQuery.data.find(
+      (product) => String(product.id) === editProductId
+    );
+    if (!productToEdit || editingId === productToEdit.id) return;
 
-        if (productToEdit) {
-          setEditingId(productToEdit.id);
-          setForm({
-            name: productToEdit.name,
-            description: productToEdit.description || "",
-            price: String(productToEdit.price),
-            stock: String(productToEdit.stock),
-          });
-        }
-      })
-      .catch((err: unknown) => setError(getApiErrorMessage(err, "Could not load products.")))
-      .finally(() => setLoading(false));
-  }, [editProductId]);
+    setEditingId(productToEdit.id);
+    setForm({
+      name: productToEdit.name,
+      description: productToEdit.description || "",
+      price: String(productToEdit.price),
+      stock: String(productToEdit.stock),
+    });
+  }, [editProductId, editingId, productsQuery.data]);
 
   const updateField = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
@@ -75,8 +72,8 @@ export default function AdminProducts() {
 
     const previousProducts = products;
     if (editingId) {
-      setProducts((current) =>
-        current.map((product) =>
+      queryClient.setQueryData<Product[]>(["products", "admin"], (current) =>
+        current?.map((product) =>
           product.id === editingId ? { ...product, ...payload } : product
         )
       );
@@ -98,15 +95,17 @@ export default function AdminProducts() {
         }
       }
 
-      setProducts((current) => editingId
-        ? current.map((item) => item.id === product.id ? product : item)
-        : [...current, product]);
+      queryClient.setQueryData<Product[]>(["products", "admin"], (current) =>
+        editingId
+          ? (current || []).map((item) => item.id === product.id ? product : item)
+          : [...(current || []), product]
+      );
       await queryClient.invalidateQueries({ queryKey: ["products"] });
       setError(uploadError);
       setNotice(uploadError ? "" : isEditing ? "Product updated." : "Product created.");
       resetForm();
     } catch (err: unknown) {
-      setProducts(previousProducts);
+      queryClient.setQueryData(["products", "admin"], previousProducts);
       setError(getApiErrorMessage(err, "Could not save the product."));
     } finally {
       setSaving(false);
@@ -133,14 +132,16 @@ export default function AdminProducts() {
     setError("");
     setNotice("");
     const previousProducts = products;
-    setProducts((current) => current.filter((item) => item.id !== product.id));
+    queryClient.setQueryData<Product[]>(["products", "admin"], (current) =>
+      current?.filter((item) => item.id !== product.id)
+    );
     try {
       await deleteProduct(product.id);
       await queryClient.invalidateQueries({ queryKey: ["products"] });
       if (editingId === product.id) resetForm();
       setNotice("Product deleted.");
     } catch (err: unknown) {
-      setProducts(previousProducts);
+      queryClient.setQueryData(["products", "admin"], previousProducts);
       setError(getApiErrorMessage(err, "Could not delete the product."));
     }
   };
@@ -155,7 +156,7 @@ export default function AdminProducts() {
         <Link to="/admin/orders" className="text-sm font-medium underline">View all orders</Link>
       </div>
 
-      {error && <p role="alert" className="mb-5 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {(error || productsQuery.error) && <p role="alert" className="mb-5 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error || getApiErrorMessage(productsQuery.error, "Could not load products.")}</p>}
       {notice && <p role="status" className="mb-5 rounded-lg bg-green-50 p-3 text-sm text-green-800">{notice}</p>}
 
       <form onSubmit={submit} className="mb-10 border-y py-6">
@@ -203,7 +204,7 @@ export default function AdminProducts() {
 
       <section>
         <h2 className="mb-4 text-lg font-semibold">Products</h2>
-        {loading ? (
+        {productsQuery.isPending ? (
           <p className="py-8 text-center text-slate-500">Loading products...</p>
         ) : products.length === 0 ? (
           <p className="border-y py-8 text-center text-slate-500">No active products.</p>
