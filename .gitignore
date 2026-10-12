@@ -1,5 +1,6 @@
 BACKEND/.env
 BACKEND/app/.env
+.venv/
 BACKEND/app/uploads/
 BACKEND/app/vector_store/
 BACKEND/test-results/
