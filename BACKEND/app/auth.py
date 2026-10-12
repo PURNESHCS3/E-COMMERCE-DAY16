@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -43,12 +45,12 @@ def verify_password(
 
 ALGORITHM = settings.JWT_ALGORITHM
 SECRET_KEY = settings.JWT_SECRET
+REFRESH_SECRET_KEY = settings.effective_jwt_refresh_secret
 
 ACCESS_TOKEN_EXPIRE_MINUTES = (
     settings.ACCESS_TOKEN_EXPIRE_MINUTES
 )
-
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
 
 
 # ============================================================
@@ -80,6 +82,7 @@ def create_access_token(
 
     to_encode.update({
         "exp": expire,
+        "jti": secrets.token_urlsafe(16),
         "type": "access"
     })
 
@@ -100,9 +103,7 @@ def create_refresh_token(
     data: dict
 ) -> str:
     """
-    Create a JWT refresh token.
-
-    Refresh tokens are valid for 7 days.
+    Create a refresh token with the configured lifetime.
     """
 
     to_encode = data.copy()
@@ -116,12 +117,13 @@ def create_refresh_token(
 
     to_encode.update({
         "exp": expire,
+        "jti": secrets.token_urlsafe(16),
         "type": "refresh"
     })
 
     encoded_jwt = jwt.encode(
         to_encode,
-        SECRET_KEY,
+        REFRESH_SECRET_KEY,
         algorithm=ALGORITHM
     )
 
@@ -141,13 +143,28 @@ def decode_token(token: str) -> Optional[dict]:
     """
 
     try:
-        payload = jwt.decode(
-            token,
-            SECRET_KEY,
-            algorithms=[ALGORITHM]
-        )
-
-        return payload
-
+        token_type = jwt.get_unverified_claims(token).get("type")
     except JWTError:
         return None
+
+    if token_type == "access":
+        signing_keys = (SECRET_KEY,)
+    elif token_type == "refresh":
+        signing_keys = (REFRESH_SECRET_KEY,)
+    else:
+        return None
+
+    for signing_key in signing_keys:
+        try:
+            return jwt.decode(
+                token,
+                signing_key,
+                algorithms=[ALGORITHM]
+            )
+        except JWTError:
+            continue
+    return None
+
+
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

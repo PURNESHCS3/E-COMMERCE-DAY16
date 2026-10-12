@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import { useCartStore } from "./cartStore";
-import { getCurrentUser, loginUser } from "../services/auth";
+import { getCurrentUser, loginUser, revokeRefreshToken } from "../services/auth";
 import { queryClient } from "../queryClient";
+import { useNotificationStore } from "./notificationStore";
+import { clearAIChatHistory } from "../services/ai";
 import type { User } from "../types";
 
 export interface AuthState {
@@ -20,8 +22,10 @@ export const useAuthStore = create<AuthState>()((set) => ({
   setLoading: (loading) => set({ loading }),
   login: async (email, password) => {
     queryClient.removeQueries({ queryKey: ["cart"] });
+    queryClient.removeQueries({ queryKey: ["chat"] });
     useCartStore.getState().clear();
     const tokens = await loginUser({ email, password });
+    clearAIChatHistory();
     localStorage.setItem("access_token", tokens.access_token);
     localStorage.setItem("refresh_token", tokens.refresh_token);
 
@@ -33,15 +37,24 @@ export const useAuthStore = create<AuthState>()((set) => ({
       localStorage.removeItem("access_token");
       localStorage.removeItem("refresh_token");
       queryClient.removeQueries({ queryKey: ["cart"] });
+      queryClient.removeQueries({ queryKey: ["chat"] });
       useCartStore.getState().clear();
       throw error;
     }
   },
   logout: () => {
+    const refreshToken = localStorage.getItem("refresh_token");
+    if (refreshToken) {
+      void revokeRefreshToken(refreshToken).catch((error: unknown) => {
+        console.error("Unable to revoke the refresh token during logout.", error);
+      });
+    }
     localStorage.removeItem("access_token");
     localStorage.removeItem("refresh_token");
+    clearAIChatHistory();
     queryClient.removeQueries({ queryKey: ["cart"] });
     useCartStore.getState().clear();
+    useNotificationStore.getState().clear();
     set({ user: null });
   },
 }));

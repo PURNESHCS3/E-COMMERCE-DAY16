@@ -1,6 +1,10 @@
-from typing import Optional
+from datetime import datetime
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import field_validator
+
+from app.image_urls import normalize_product_image_url
 
 
 # ============================================================
@@ -96,6 +100,11 @@ class ProductCreate(BaseModel):
 
     image_url: Optional[str] = None
 
+    @field_validator("image_url")
+    @classmethod
+    def validate_image_url(cls, value: str | None) -> str | None:
+        return normalize_product_image_url(value)
+
 
 class ProductResponse(BaseModel):
     id: int
@@ -148,13 +157,55 @@ class OrderCreate(BaseModel):
     )
 
 
+class OrderStatusUpdate(BaseModel):
+    status: Literal["dispatched", "out_for_delivery", "delivered"]
+
+
+class OrderProductResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrderItemResponse(BaseModel):
+    id: int
+    product_id: int
+    quantity: int
+    price: float
+    product: Optional[OrderProductResponse] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OrderResponse(BaseModel):
     id: int
     user_id: int
     total_amount: float
     delivery_address: Optional[str] = None
     status: str
+    created_at: Optional[datetime] = None
+    items: list[OrderItemResponse] = Field(default_factory=list)
 
     model_config = ConfigDict(
         from_attributes=True
     )
+
+
+class ChatMessageResponse(BaseModel):
+    id: int
+    user_id: int
+    sender_id: int
+    sender_name: str
+    sender_role: str
+    body: str
+    created_at: datetime
+
+
+class ChatConversationResponse(BaseModel):
+    user_id: int
+    user_name: str
+    last_message: str
+    created_at: datetime

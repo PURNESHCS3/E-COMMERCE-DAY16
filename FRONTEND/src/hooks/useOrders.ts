@@ -1,5 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { cancelOrder, createOrder, getOrder, getOrders } from "../services/orders";
+import {
+  cancelOrder,
+  createOrder,
+  getOrder,
+  getOrders,
+  updateOrderStatus,
+} from "../services/orders";
 import { cartItemsQueryKey, cartQueryKey } from "./useCart";
 import { useCartStore } from "../stores/cartStore";
 
@@ -50,6 +56,28 @@ export function useCancelOrder() {
   return useMutation({
     mutationFn: cancelOrder,
     onSuccess: async (result, orderId) => {
+      queryClient.setQueryData(ordersQueryKey, (orders: Awaited<ReturnType<typeof getOrders>> | undefined) =>
+        orders?.map((order) =>
+          order.id === orderId ? { ...order, status: result.status } : order
+        )
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ordersQueryKey }),
+        queryClient.invalidateQueries({ queryKey: orderQueryKey(orderId) }),
+      ]);
+    },
+  });
+}
+
+export function useUpdateOrderStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ orderId, status }: {
+      orderId: number;
+      status: "dispatched" | "out_for_delivery" | "delivered";
+    }) => updateOrderStatus(orderId, status),
+    onSuccess: async (result, { orderId }) => {
       queryClient.setQueryData(ordersQueryKey, (orders: Awaited<ReturnType<typeof getOrders>> | undefined) =>
         orders?.map((order) =>
           order.id === orderId ? { ...order, status: result.status } : order

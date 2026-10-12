@@ -20,6 +20,15 @@ export const getProduct = async (id: string | number): Promise<Product> => {
   return data;
 };
 
+export const searchProducts = async (
+  query: string,
+): Promise<Product[]> => {
+  const { data } = await api.get<Product[]>("/products/search", {
+    params: { q: query, limit: 100 },
+  });
+  return data;
+};
+
 export const createProduct = async (payload: ProductPayload): Promise<Product> => {
   const { data } = await api.post<Product>("/products/", payload);
   return data;

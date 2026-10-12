@@ -49,6 +49,16 @@ html.dark .bg-white {
   background-color: #0f172a;
 }
 
+html.dark button.bg-white {
+  color: #e2e8f0;
+  background-color: #1e293b;
+}
+
+html.dark button.bg-white:hover {
+  color: #fff;
+  background-color: #334155;
+}
+
 html.dark .bg-slate-50 {
   background-color: #111827;
 }

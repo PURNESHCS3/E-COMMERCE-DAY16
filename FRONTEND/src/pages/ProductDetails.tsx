@@ -6,7 +6,7 @@ import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { getProduct } from "../services/products";
 import { API_URL } from "../services/api";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../hooks/useAuth";
 import { useAddToCart } from "../hooks/useCart";
 import { getApiErrorMessage } from "../lib/apiError";
 import type { Product } from "../types";
@@ -77,7 +77,7 @@ function ProductDetailsContent({ id, product }: ProductDetailsContentProps) {
       <Card className="overflow-hidden">
         <div className="grid md:grid-cols-2">
           <div className="min-h-[360px] bg-slate-100">
-            {src ? <img src={src} alt={product.name} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-slate-400">No image</div>}
+            {src ? <img src={src} alt={product.name} referrerPolicy="no-referrer" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center text-slate-400">No image</div>}
           </div>
           <CardContent className="flex flex-col justify-center p-8">
             <p className="mb-2 text-sm uppercase tracking-wide text-slate-400">Product #{product.id}</p>

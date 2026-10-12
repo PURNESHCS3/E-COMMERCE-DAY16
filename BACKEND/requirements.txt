@@ -1,4 +1,8 @@
 fastapi
+slowapi
+chromadb
+langchain-core
+langchain-openai
 uvicorn[standard]
 sqlalchemy
 psycopg2-binary
@@ -11,6 +15,8 @@ passlib[bcrypt]
 bcrypt<4.1
 python-multipart
 redis
+celery[redis]
+reportlab
 email-validator
 pillow
 pytest

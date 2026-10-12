@@ -1,7 +1,6 @@
 import { useEffect, type PropsWithChildren } from "react";
 import { getCurrentUser } from "../services/auth";
 import { useAuthStore } from "../stores/authStore";
-import type { AuthState } from "../stores/authStore";
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const setUser = useAuthStore((state) => state.setUser);
@@ -41,6 +40,3 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   return children;
 }
-
-export const useAuth = <T,>(selector: (state: AuthState) => T): T =>
-  useAuthStore(selector);

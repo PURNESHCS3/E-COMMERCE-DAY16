@@ -5,7 +5,8 @@ from sqlalchemy import (
     Float,
     Boolean,
     ForeignKey,
-    DateTime
+    DateTime,
+    Text
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -36,6 +37,11 @@ class User(Base):
     orders = relationship(
         "Order",
         back_populates="user"
+    )
+    refresh_sessions = relationship(
+        "RefreshSession",
+        back_populates="user",
+        cascade="all, delete-orphan"
     )
 
 
@@ -123,4 +129,82 @@ class OrderItem(Base):
     order = relationship(
         "Order",
         back_populates="items"
+    )
+    product = relationship("Product")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    sender_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    body = Column(String(2000), nullable=False)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+
+
+class RefreshSession(Base):
+    __tablename__ = "refresh_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    token_hash = Column(String(64), unique=True, nullable=False)
+
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="refresh_sessions")
+
+
+class BackgroundJob(Base):
+    __tablename__ = "background_jobs"
+
+    id = Column(String(36), primary_key=True)
+    owner_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    kind = Column(String(40), nullable=False)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    message = Column(String(255), nullable=False)
+    result = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False
     )

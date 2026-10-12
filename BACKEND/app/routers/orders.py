@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.database import get_db
 from app.models import (
@@ -9,7 +9,7 @@ from app.models import (
     Order,
     OrderItem
 )
-from app.schemas import OrderCreate
+from app.schemas import OrderCreate, OrderResponse, OrderStatusUpdate
 from app.dependencies import get_admin_user, get_current_user
 from app.redis_client import redis_client
 from app.websocket_manager import manager
@@ -19,6 +19,12 @@ router = APIRouter(
     prefix="/api/orders",
     tags=["Orders"]
 )
+
+NEXT_ORDER_STATUS = {
+    "confirmed": "dispatched",
+    "dispatched": "out_for_delivery",
+    "out_for_delivery": "delivered",
+}
 
 
 @router.post("/")
@@ -42,14 +48,20 @@ async def create_order(
 
     total_amount = 0
 
+    product_ids = [int(product_id) for product_id in cart_data]
+    products = {
+        product.id: product
+        for product in db.query(Product)
+        .filter(
+            Product.id.in_(product_ids),
+            Product.is_active.is_(True),
+        )
+        .all()
+    }
     order_items = []
 
     for product_id, quantity in cart_data.items():
-
-        product = db.query(Product).filter(
-            Product.id == int(product_id),
-            Product.is_active == True
-        ).first()
+        product = products.get(int(product_id))
 
         if not product:
             raise HTTPException(
@@ -106,11 +118,14 @@ async def create_order(
     redis_client.delete(key)
     redis_client.delete("products:all")
 
-    await manager.broadcast({
+    order_event = {
+        "type": "order.updated",
         "order_id": order.id,
         "user_id": current_user.id,
         "status": "confirmed"
-    })
+    }
+    await manager.send_to_user(current_user.id, order_event)
+    await manager.send_to_admins(order_event)
 
     return {
         "message": "Order placed successfully",
@@ -128,21 +143,34 @@ def get_orders(
 ):
 
     if current_user.role == "admin":
-        return db.query(Order).all()
+        return (
+            db.query(Order)
+            .options(selectinload(Order.items).joinedload(OrderItem.product))
+            .all()
+        )
 
-    return db.query(Order).filter(
-        Order.user_id == current_user.id
-    ).all()
+    return (
+        db.query(Order)
+        .options(selectinload(Order.items).joinedload(OrderItem.product))
+        .filter(Order.user_id == current_user.id)
+        .all()
+    )
 
 
-@router.get("/{order_id}")
+@router.get("/{order_id}", response_model=OrderResponse)
 def get_order(
     order_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
 
-    query = db.query(Order).filter(Order.id == order_id)
+    query = (
+        db.query(Order)
+        .options(
+            joinedload(Order.items).joinedload(OrderItem.product)
+        )
+        .filter(Order.id == order_id)
+    )
 
     if current_user.role != "admin":
         query = query.filter(Order.user_id == current_user.id)
@@ -156,6 +184,54 @@ def get_order(
         )
 
     return order
+
+
+@router.post("/{order_id}/status")
+async def update_order_status(
+    order_id: int,
+    status_data: OrderStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_admin_user)
+):
+    order = (
+        db.query(Order)
+        .options(
+            joinedload(Order.items).joinedload(OrderItem.product)
+        )
+        .filter(Order.id == order_id)
+        .first()
+    )
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    expected_status = NEXT_ORDER_STATUS.get(order.status)
+    if status_data.status != expected_status:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot change order status from '{order.status}' to '{status_data.status}'"
+        )
+
+    order.status = status_data.status
+    db.commit()
+    db.refresh(order)
+
+    order_event = {
+        "type": "order.updated",
+        "order_id": order.id,
+        "user_id": order.user_id,
+        "status": order.status
+    }
+    await manager.send_to_user(order.user_id, order_event)
+    await manager.send_to_admins(order_event)
+
+    return {
+        "message": "Order status updated successfully",
+        "order_id": order.id,
+        "status": order.status
+    }
 
 
 @router.post("/{order_id}/cancel")
@@ -186,12 +262,8 @@ async def cancel_order(
         )
 
     for item in order.items:
-        product = db.query(Product).filter(
-            Product.id == item.product_id
-        ).first()
-
-        if product:
-            product.stock += item.quantity
+        if item.product:
+            item.product.stock += item.quantity
 
     order.status = "cancelled"
     db.commit()
@@ -199,11 +271,14 @@ async def cancel_order(
 
     redis_client.delete("products:all")
 
-    await manager.broadcast({
+    order_event = {
+        "type": "order.updated",
         "order_id": order.id,
         "user_id": order.user_id,
         "status": order.status
-    })
+    }
+    await manager.send_to_user(order.user_id, order_event)
+    await manager.send_to_admins(order_event)
 
     return {
         "message": "Order cancelled successfully",

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
@@ -21,6 +21,87 @@ function renderProducts() {
 }
 
 describe("product catalog", () => {
+  it("shows 12 products initially and loads another page only when requested", async () => {
+    const products = Array.from({ length: 25 }, (_, index) => ({
+      ...testProduct,
+      id: index + 1,
+      name: `Catalog Product ${index + 1}`,
+    }));
+    const requestedOffsets: number[] = [];
+    server.use(
+      http.get("http://127.0.0.1:8000/api/products/", ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        const skip = Number(params.get("skip") ?? 0);
+        const limit = Number(params.get("limit") ?? products.length);
+        requestedOffsets.push(skip);
+        return HttpResponse.json(products.slice(skip, skip + limit));
+      }),
+    );
+    renderProducts();
+
+    const catalog = await screen.findByRole("heading", { name: "Catalog Product 1" });
+    const initialGrid = catalog.closest("div.grid");
+    expect(initialGrid).not.toBeNull();
+    await waitFor(() => {
+      expect(within(initialGrid as HTMLElement).getAllByRole("heading", { level: 3 }))
+        .toHaveLength(12);
+    });
+    expect(requestedOffsets).toEqual([0]);
+    expect(screen.getByRole("button", { name: "Load more products" })).toBeInTheDocument();
+
+    fireEvent.scroll(window, { target: { scrollY: 1000 } });
+    expect(requestedOffsets).toEqual([0]);
+    expect(within(initialGrid as HTMLElement).getAllByRole("heading", { level: 3 }))
+      .toHaveLength(12);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more products" }));
+    await screen.findByRole("heading", { name: "Catalog Product 13" });
+    await waitFor(() => {
+      expect(within(initialGrid as HTMLElement).getAllByRole("heading", { level: 3 }))
+        .toHaveLength(24);
+    });
+    expect(requestedOffsets).toEqual([0, 12]);
+    expect(within(initialGrid as HTMLElement).getAllByRole("heading", { level: 3 }))
+      .toHaveLength(24);
+    expect(screen.getByRole("button", { name: "Load more products" })).toBeInTheDocument();
+
+    fireEvent.scroll(window, { target: { scrollY: 2000 } });
+    expect(requestedOffsets).toEqual([0, 12]);
+    expect(within(initialGrid as HTMLElement).getAllByRole("heading", { level: 3 }))
+      .toHaveLength(24);
+  });
+
+  it("shows a disabled load-more button while the next page is loading", async () => {
+    const products = Array.from({ length: 24 }, (_, index) => ({
+      ...testProduct,
+      id: index + 1,
+      name: `Next Page Product ${index + 1}`,
+    }));
+    let releaseNextPage: (() => void) | undefined;
+    server.use(
+      http.get("http://127.0.0.1:8000/api/products/", async ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        const skip = Number(params.get("skip") ?? 0);
+        const limit = Number(params.get("limit") ?? 12);
+        if (skip === 12) {
+          await new Promise<void>((resolve) => {
+            releaseNextPage = resolve;
+          });
+        }
+        return HttpResponse.json(products.slice(skip, skip + limit));
+      }),
+    );
+    renderProducts();
+    await screen.findByRole("heading", { name: "Next Page Product 1" });
+    fireEvent.click(screen.getByRole("button", { name: "Load more products" }));
+    const loadingButton = await screen.findByRole("button", { name: "Loading more products..." });
+    expect(loadingButton).toBeDisabled();
+    expect(loadingButton).toBeVisible();
+    releaseNextPage?.();
+    expect(await screen.findByRole("heading", { name: "Next Page Product 13" }))
+      .toBeInTheDocument();
+  });
+
   it("loads products and filters by the user's search", async () => {
     renderProducts();
 
@@ -29,8 +110,37 @@ describe("product catalog", () => {
       target: { value: "missing" },
     });
 
-    expect(await screen.findByText("No loaded products match your search."))
+    expect(await screen.findByText("No products match your search."))
       .toBeInTheDocument();
+  });
+
+  it("shows products for partial search letters as the user types", async () => {
+    const wirelessHeadphones = {
+      ...testProduct,
+      id: 2,
+      name: "Wireless Headphones",
+    };
+    const searchedQueries: string[] = [];
+    server.use(
+      http.get("http://127.0.0.1:8000/api/products/search", ({ request }) => {
+        const query = new URL(request.url).searchParams.get("q")?.toLowerCase() ?? "";
+        searchedQueries.push(query);
+        const matches = ["w", "wi", "wire", "wireless", "wireless hea"].includes(query);
+        return HttpResponse.json(matches ? [wirelessHeadphones] : []);
+      }),
+    );
+    renderProducts();
+    const search = screen.getByRole("textbox", { name: "Search products" });
+    expect(screen.queryByRole("combobox", { name: "Product search mode" }))
+      .not.toBeInTheDocument();
+
+    for (const query of ["w", "wi", "wire", "wireless"]) {
+      fireEvent.change(search, { target: { value: query } });
+      await waitFor(() => expect(searchedQueries).toContain(query), {
+        timeout: 2000,
+      });
+      expect(await screen.findByText("Wireless Headphones")).toBeInTheDocument();
+    }
   });
 
   it("shows a recoverable message when the catalog request fails", async () => {

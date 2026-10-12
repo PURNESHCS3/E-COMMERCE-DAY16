@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app.routers.products import UPLOAD_DIR
 
 
@@ -27,6 +29,103 @@ def test_create_product(
     assert data["stock"] == 10
 
 
+def test_admin_can_create_product_with_public_https_image_url(
+    client,
+    admin_headers,
+):
+    image_url = "https://cdn.example.org/products/laptop.jpg?width=800"
+
+    response = client.post(
+        "/api/products/",
+        headers=admin_headers,
+        json={
+            "name": "URL image product",
+            "price": 100,
+            "stock": 2,
+            "image_url": image_url,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["image_url"] == image_url
+
+
+def test_product_image_url_rejects_insecure_or_local_urls(client, admin_headers):
+    for image_url in (
+        "http://cdn.example.org/image.jpg",
+        "https://localhost/image.jpg",
+        "https://127.0.0.1/image.jpg",
+        "https://2130706433/image.jpg",
+        "https://0x7f000001/image.jpg",
+        "https://0x7f.0.0.1/image.jpg",
+        "https://user:password@cdn.example.org/image.jpg",
+        "https://cdn.example.org:8443/image.jpg",
+    ):
+        response = client.post(
+            "/api/products/",
+            headers=admin_headers,
+            json={
+                "name": "Invalid URL product",
+                "price": 100,
+                "stock": 2,
+                "image_url": image_url,
+            },
+        )
+
+        assert response.status_code == 422, image_url
+
+
+def test_product_update_persists_public_https_image_url(
+    client,
+    test_product,
+    admin_headers,
+):
+    image_url = "https://images.example.org/headphones.webp"
+
+    response = client.put(
+        f"/api/products/{test_product.id}",
+        headers=admin_headers,
+        json={
+            "name": test_product.name,
+            "description": test_product.description,
+            "price": test_product.price,
+            "stock": test_product.stock,
+            "image_url": image_url,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["image_url"] == image_url
+
+
+def test_product_update_preserves_image_url_when_not_provided(
+    client,
+    test_product,
+    admin_headers,
+    db,
+):
+    from app.models import Product
+
+    image_url = "https://cdn.example.org/existing-image.jpg"
+    product = db.get(Product, test_product.id)
+    product.image_url = image_url
+    db.commit()
+
+    response = client.put(
+        f"/api/products/{test_product.id}",
+        headers=admin_headers,
+        json={
+            "name": test_product.name,
+            "description": test_product.description,
+            "price": test_product.price,
+            "stock": test_product.stock,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["image_url"] == image_url
+
+
 def test_get_products(
     client,
     test_product
@@ -42,6 +141,132 @@ def test_get_products(
 
     assert len(data) >= 1
 
+
+def test_product_search_matches_partial_letters_as_they_are_typed(client, db):
+    from app.models import Product
+
+    product = Product(
+        name="Wireless Headphones",
+        description="Noise cancelling audio",
+        price=79.99,
+        stock=10,
+        is_active=True,
+    )
+    db.add(product)
+    db.commit()
+    db.refresh(product)
+
+    for query in ("w", "wi", "wire", "wireless", "wireless hea", "wirless"):
+        response = client.get(
+            "/api/products/search",
+            params={"q": query},
+        )
+
+        assert response.status_code == 200, query
+        assert any(item["id"] == product.id for item in response.json()), query
+        if query in {"w", "wi", "wire"}:
+            assert len(response.json()) == 1, query
+
+
+def test_product_search_requires_each_entered_word_to_match(client, db):
+    from app.models import Product
+
+    product = Product(
+        name="Wireless Headphones",
+        description="Noise cancelling audio",
+        price=79.99,
+        stock=10,
+        is_active=True,
+    )
+    db.add(product)
+    db.commit()
+
+    response = client.get(
+        "/api/products/search",
+        params={"q": "wireless unrelated"},
+    )
+
+    assert response.status_code == 200
+    assert all(item["name"] != product.name for item in response.json())
+
+
+def test_postgres_fuzzy_search_uses_configured_threshold_and_excludes_noise(
+    client,
+    db,
+    monkeypatch,
+):
+    if db.get_bind().dialect.name != "postgresql":
+        pytest.skip("PostgreSQL pg_trgm fuzzy search")
+
+    from app import database
+    from app.models import Product
+
+    laptop = Product(
+        name="Laptop",
+        description="Portable computer",
+        price=500,
+        stock=5,
+        is_active=True,
+    )
+    smart_tv = Product(
+        name="Smart TV",
+        description="Connected television",
+        price=900,
+        stock=4,
+        is_active=True,
+    )
+    smart_tv_accessory = Product(
+        name="Television Stand",
+        description="Designed for smart televisions",
+        price=50,
+        stock=8,
+        is_active=True,
+    )
+    unrelated = Product(
+        name="Desktop",
+        description="Office computer",
+        price=800,
+        stock=3,
+        is_active=True,
+    )
+    db.add_all([laptop, smart_tv, smart_tv_accessory, unrelated])
+    db.commit()
+    db.refresh(laptop)
+
+    monkeypatch.setattr(database.settings, "PRODUCT_SEARCH_SIMILARITY_THRESHOLD", 0.5)
+    response = client.get(
+        "/api/products/search",
+        params={"q": "leptop"},
+    )
+    assert response.status_code == 200
+    assert all(result["id"] != laptop.id for result in response.json())
+
+    monkeypatch.setattr(database.settings, "PRODUCT_SEARCH_SIMILARITY_THRESHOLD", 0.35)
+    response = client.get(
+        "/api/products/search",
+        params={"q": "leptop"},
+    )
+    assert response.status_code == 200
+    results = response.json()
+    assert results
+    assert results[0]["id"] == laptop.id
+    assert all(result["id"] == laptop.id for result in results)
+
+    monkeypatch.setattr(database.settings, "PRODUCT_SEARCH_SIMILARITY_THRESHOLD", 0.25)
+    response = client.get(
+        "/api/products/search",
+        params={"q": "smort"},
+    )
+    assert response.status_code == 200
+    results = response.json()
+    assert results
+    assert results[0]["id"] == smart_tv.id
+    assert any(result["id"] == smart_tv_accessory.id for result in results)
+    assert results.index(next(
+        result for result in results if result["id"] == smart_tv.id
+    )) < results.index(next(
+        result for result in results if result["id"] == smart_tv_accessory.id
+    ))
 
 def test_get_product(
     client,

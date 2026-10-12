@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { API_URL } from "../services/api";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../hooks/useAuth";
 import { useCartItems, useCartQuery, useRemoveFromCart } from "../hooks/useCart";
 import { getApiErrorMessage } from "../lib/apiError";
 
@@ -48,7 +48,7 @@ export default function Cart() {
                 <div className="flex min-w-0 items-center gap-4">
                   <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100">
                     {imageSrc(product.image_url) ? (
-                      <img src={imageSrc(product.image_url) ?? undefined} alt={product.name} className="h-full w-full object-cover" />
+                      <img src={imageSrc(product.image_url) ?? undefined} alt={product.name} referrerPolicy="no-referrer" className="h-full w-full object-cover" />
                     ) : (
                       <span className="px-1 text-center text-[10px] text-slate-400">No image</span>
                     )}

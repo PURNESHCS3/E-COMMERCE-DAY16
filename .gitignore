@@ -1,5 +1,8 @@
 BACKEND/.env
 BACKEND/app/.env
+BACKEND/app/uploads/
+BACKEND/app/vector_store/
+BACKEND/test-results/
 BACKEND/.venv/
 BACKEND/.pytest_cache/
 **/__pycache__/

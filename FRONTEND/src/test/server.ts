@@ -26,11 +26,18 @@ export const server = setupServer(
   http.get("http://127.0.0.1:8000/api/products/", () =>
     HttpResponse.json([testProduct])
   ),
+  http.get("http://127.0.0.1:8000/api/products/search", ({ request }) => {
+    const query = new URL(request.url).searchParams.get("q");
+    return HttpResponse.json(query === "missing" ? [] : [testProduct]);
+  }),
   http.get("http://127.0.0.1:8000/api/products/1", () =>
     HttpResponse.json(testProduct)
   ),
   http.get("http://127.0.0.1:8000/api/auth/me", () =>
     HttpResponse.json(testUser)
+  ),
+  http.get("http://127.0.0.1:8000/api/ai/providers", () =>
+    HttpResponse.json({ providers: [] })
   ),
   http.get("http://127.0.0.1:8000/api/cart/", () =>
     HttpResponse.json({ cart: testCart })

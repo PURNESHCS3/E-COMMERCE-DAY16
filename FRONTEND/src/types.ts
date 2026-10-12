@@ -38,11 +38,33 @@ export interface ProductPayload {
   description: string;
   price: number;
   stock: number;
+  image_url?: string | null;
 }
 
 export interface ProductPageParams {
   skip?: number;
   limit?: number;
+}
+
+export interface BackgroundJobResult {
+  order_id?: number;
+  filename?: string;
+  processed?: number;
+  imported?: number;
+  rejected?: number;
+  errors?: string[];
+  errors_truncated?: boolean;
+}
+
+export interface BackgroundJob {
+  id: string;
+  kind: "invoice" | "product_import";
+  status: "pending" | "running" | "completed" | "failed";
+  progress: number;
+  message: string;
+  result: BackgroundJobResult | null;
+  error: string | null;
+  created_at: string | null;
 }
 
 export type Cart = Record<string, number>;
@@ -62,6 +84,12 @@ export interface OrderItem {
   product_id: number;
   quantity: number;
   price: number;
+  product?: {
+    id: number;
+    name: string;
+    description: string | null;
+    image_url: string | null;
+  } | null;
 }
 
 export interface Order {
@@ -87,6 +115,60 @@ export interface CancelOrderResponse {
   order_id: number;
   status: string;
 }
+
+export interface UpdateOrderStatusResponse {
+  message: string;
+  order_id: number;
+  status: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  user_id: number;
+  sender_id: number;
+  sender_name: string;
+  sender_role: string;
+  body: string;
+  created_at: string;
+}
+
+export interface ChatConversation {
+  user_id: number;
+  user_name: string;
+  last_message: string;
+  created_at: string;
+}
+
+export interface AIChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AIProductSource {
+  product_id: number;
+  name: string;
+  price: number;
+  stock: number;
+  image_url: string | null;
+  relevance: number;
+}
+
+export interface AIProviderInfo {
+  name: string;
+  model: string;
+}
+
+export type ClientRealtimeEvent = {
+  type: "chat.send";
+  body: string;
+  user_id?: number;
+};
+
+export type ServerRealtimeEvent =
+  | { type: "auth.ok" }
+  | { type: "order.updated"; order_id: number; user_id: number; status: string }
+  | { type: "chat.message"; message: ChatMessage }
+  | { type: "error"; message: string };
 
 export interface UploadedImageResponse {
   image_url: string;

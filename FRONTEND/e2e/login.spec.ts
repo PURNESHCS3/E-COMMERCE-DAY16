@@ -16,6 +16,12 @@ const tokens = {
 };
 
 async function mockSuccessfulLogin(page: Page) {
+  await page.routeWebSocket(`${apiBase.replace(/^http/, "ws")}/ws`, (socket) => {
+    socket.onMessage((message) => {
+      const event = JSON.parse(String(message)) as { type?: string };
+      if (event.type === "auth") socket.send(JSON.stringify({ type: "auth.ok" }));
+    });
+  });
   await page.route(`${apiBase}/auth/login`, (route) =>
     route.fulfill({ json: tokens })
   );
@@ -107,6 +113,12 @@ test.describe("login page", () => {
   test("submits credentials, loads the authenticated user, and opens the account", async ({ page }) => {
     let submittedBody: unknown;
     let authorizationHeader: string | undefined;
+    await page.routeWebSocket(`${apiBase.replace(/^http/, "ws")}/ws`, (socket) => {
+      socket.onMessage((message) => {
+        const event = JSON.parse(String(message)) as { type?: string };
+        if (event.type === "auth") socket.send(JSON.stringify({ type: "auth.ok" }));
+      });
+    });
     await page.route(`${apiBase}/auth/login`, async (route) => {
       submittedBody = route.request().postDataJSON();
       await route.fulfill({ json: tokens });

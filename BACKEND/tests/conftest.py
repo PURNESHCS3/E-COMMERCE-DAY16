@@ -1,18 +1,13 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-
-from app.main import app
-from app.database import Base, get_db
-from app.models import User, Product
-from app.redis_client import redis_client
-from app.auth import hash_password
 
 
 # ============================================================
@@ -41,6 +36,39 @@ if not TEST_DATABASE_URL:
     raise RuntimeError(
         f"TEST_DATABASE_URL was not found in {ENV_FILE}"
     )
+
+TEST_REDIS_URL = os.getenv("TEST_REDIS_URL")
+if not TEST_REDIS_URL:
+    raise RuntimeError(
+        f"TEST_REDIS_URL was not found in {ENV_FILE}"
+    )
+
+app_redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+test_redis = urlparse(TEST_REDIS_URL)
+app_redis = urlparse(app_redis_url)
+if (
+    test_redis.scheme,
+    test_redis.hostname,
+    test_redis.port,
+    test_redis.path,
+) == (
+    app_redis.scheme,
+    app_redis.hostname,
+    app_redis.port,
+    app_redis.path,
+):
+    raise RuntimeError(
+        "TEST_REDIS_URL must use a different Redis database from REDIS_URL"
+    )
+
+# The application routers must use the isolated Redis database during tests too.
+os.environ["REDIS_URL"] = TEST_REDIS_URL
+
+from app.main import app
+from app.database import Base, get_db
+from app.models import BackgroundJob, ChatMessage, Product, RefreshSession, User
+from app.redis_client import redis_client
+from app.auth import hash_password
 
 
 # ============================================================
@@ -88,6 +116,9 @@ app.dependency_overrides[
     autouse=True
 )
 def setup_database():
+    if test_engine.dialect.name == "postgresql":
+        with test_engine.begin() as connection:
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
 
     Base.metadata.drop_all(
         bind=test_engine
@@ -122,6 +153,9 @@ def reset_database():
 
         from app.models import OrderItem, Order
 
+        db.query(ChatMessage).delete(synchronize_session=False)
+        db.query(RefreshSession).delete(synchronize_session=False)
+        db.query(BackgroundJob).delete(synchronize_session=False)
         db.query(OrderItem).delete(
             synchronize_session=False
         )

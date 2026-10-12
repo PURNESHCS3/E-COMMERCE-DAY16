@@ -1,18 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Search, SlidersHorizontal } from "lucide-react";
 import ProductCard from "../components/ProductCard";
 import { Input } from "../components/ui/input";
-import { getProducts } from "../services/products";
+import { getProducts, searchProducts } from "../services/products";
 import { getApiErrorMessage } from "../lib/apiError";
 
 const PAGE_SIZE = 12;
 
 export default function Products() {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [stockFilter, setStockFilter] = useState("all");
   const [sort, setSort] = useState("default");
-  const loadMoreRef = useRef(null);
   const {
     data,
     error,
@@ -30,24 +30,32 @@ export default function Products() {
     initialPageParam: 0,
     getNextPageParam: (lastPage, _pages, lastPageParam) =>
       lastPage.length === PAGE_SIZE ? lastPageParam + PAGE_SIZE : undefined,
+    enabled: !query.trim(),
+  });
+  const searchResult = useQuery({
+    queryKey: ["products", "search", debouncedQuery],
+    queryFn: () => searchProducts(debouncedQuery),
+    enabled: Boolean(debouncedQuery),
   });
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
   const products = useMemo(
-    () => data?.pages.flat() ?? [],
-    [data]
+    () => query.trim() ? searchResult.data ?? [] : data?.pages.flat() ?? [],
+    [data, query, searchResult.data]
   );
   const filtersActive =
-    query.length > 0 || stockFilter !== "all" || sort !== "default";
+    stockFilter !== "all" || sort !== "default";
 
   const filtered = useMemo(() => {
     const result = products.filter((product) => {
-      const text = `${product.name} ${product.description || ""}`.toLowerCase();
-      const matchesSearch = text.includes(query.toLowerCase());
       const matchesStock =
         stockFilter === "all" ||
         (stockFilter === "available" && product.stock > 0) ||
         (stockFilter === "out" && product.stock === 0);
-      return matchesSearch && matchesStock;
+      return matchesStock;
     });
 
     return [...result].sort((a, b) => {
@@ -56,24 +64,11 @@ export default function Products() {
       if (sort === "name") return a.name.localeCompare(b.name);
       return 0;
     });
-  }, [products, query, stockFilter, sort]);
-
-  useEffect(() => {
-    const target = loadMoreRef.current;
-    if (!target || !hasNextPage || isFetchNextPageError) return undefined;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting && !isFetchingNextPage) fetchNextPage();
-      },
-      { rootMargin: "240px" }
-    );
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError]);
+  }, [products, stockFilter, sort]);
 
   useEffect(() => {
     if (
+      !query.trim() &&
       filtersActive &&
       hasNextPage &&
       !isFetchingNextPage &&
@@ -87,6 +82,7 @@ export default function Products() {
     hasNextPage,
     isFetchingNextPage,
     isFetchNextPageError,
+    query,
   ]);
 
   return (
@@ -104,7 +100,7 @@ export default function Products() {
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search loaded products..."
+            placeholder="Search all products..."
             aria-label="Search products"
             className="pl-9"
           />
@@ -134,23 +130,31 @@ export default function Products() {
 
       <div className="mb-4 flex items-center gap-2 text-sm text-slate-500">
         <SlidersHorizontal className="h-4 w-4" />
-        {filtered.length} loaded product{filtered.length !== 1 ? "s" : ""} shown
+        {filtered.length} product{filtered.length !== 1 ? "s" : ""} shown
       </div>
-      {filtersActive && hasNextPage && (
+      {!query.trim() && filtersActive && hasNextPage && (
         <p role="status" className="mb-4 text-sm text-slate-500">
           Loading the catalog to apply filters to every product...
         </p>
       )}
 
-      {isPending && (
+      {isPending && !query.trim() && (
         <div className="py-16 text-center text-slate-500">Loading products...</div>
       )}
-      {isError && (
+      {searchResult.isFetching && debouncedQuery && (
+        <p role="status" className="py-6 text-center text-sm text-slate-500">Searching products...</p>
+      )}
+      {(query.trim() ? searchResult.isError : isError) && (
         <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
-          {getApiErrorMessage(error, "Unable to load products.")}
+          {getApiErrorMessage(
+            query.trim() ? searchResult.error : error,
+            query.trim() ? "Unable to search products." : "Unable to load products.",
+          )}
           <button
             type="button"
-            onClick={() => (isFetchNextPageError ? fetchNextPage() : refetch())}
+            onClick={() => query.trim()
+              ? searchResult.refetch()
+              : isFetchNextPageError ? fetchNextPage() : refetch()}
             className="ml-2 font-medium underline"
           >
             Retry
@@ -158,13 +162,13 @@ export default function Products() {
         </div>
       )}
 
-      {data && filtered.length === 0 && (
+      {(query.trim() ? searchResult.data : data) && filtered.length === 0 && (
         <div className="rounded-xl border bg-white p-12 text-center text-slate-500">
-          No loaded products match your search.
+          No products match your search.
         </div>
       )}
 
-      {data && (
+      {(query.trim() ? searchResult.data : data) && (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filtered.map((product, index) => (
             <ProductCard
@@ -176,20 +180,22 @@ export default function Products() {
         </div>
       )}
 
-      <div ref={loadMoreRef} aria-hidden="true" className="h-1" />
-      {isFetchingNextPage && (
+      {!query.trim() && hasNextPage && (
+        <button
+          type="button"
+          disabled={isFetchingNextPage}
+          onClick={() => {
+            if (!isFetchingNextPage) fetchNextPage();
+          }}
+          className="mx-auto mt-6 block rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
+        >
+          {isFetchingNextPage ? "Loading more products..." : "Load more products"}
+        </button>
+      )}
+      {!query.trim() && isFetchingNextPage && (
         <p role="status" className="py-6 text-center text-sm text-slate-500">
           Loading more products...
         </p>
-      )}
-      {hasNextPage && !isFetchingNextPage && (
-        <button
-          type="button"
-          onClick={() => fetchNextPage()}
-          className="mx-auto mt-6 block rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50"
-        >
-          Load more products
-        </button>
       )}
     </main>
   );

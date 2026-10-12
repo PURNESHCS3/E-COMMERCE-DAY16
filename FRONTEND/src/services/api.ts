@@ -86,6 +86,7 @@ api.interceptors.response.use(
       );
       const newAccessToken = response.data.access_token;
       localStorage.setItem("access_token", newAccessToken);
+      localStorage.setItem("refresh_token", response.data.refresh_token);
       resolvePending(null, newAccessToken);
       originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
       return api(originalRequest);
@@ -106,3 +107,15 @@ api.interceptors.response.use(
 
 export default api;
 export { API_URL };
+
+export const getWebSocketUrl = (): string => {
+  const configuredUrl = import.meta.env.VITE_WS_URL;
+  if (configuredUrl) return configuredUrl;
+
+  const apiUrl = new URL(API_URL);
+  apiUrl.protocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
+  apiUrl.pathname = `${apiUrl.pathname.replace(/\/$/, "")}/ws`;
+  apiUrl.search = "";
+  apiUrl.hash = "";
+  return apiUrl.toString();
+};

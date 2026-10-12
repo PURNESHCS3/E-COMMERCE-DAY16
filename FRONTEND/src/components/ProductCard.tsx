@@ -26,6 +26,7 @@ function ProductCard({ product, prioritizeImage = false }: ProductCardProps) {
           <img
             src={src}
             alt={product.name}
+            referrerPolicy="no-referrer"
             loading={prioritizeImage ? "eager" : "lazy"}
             decoding="async"
             fetchPriority={prioritizeImage ? "high" : "auto"}

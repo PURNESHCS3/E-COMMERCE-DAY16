@@ -9,15 +9,19 @@ from fastapi import (
     UploadFile,
     File,
     Query,
+    Request,
+    Response,
 )
 
+from sqlalchemy import and_, case, func, literal_column, or_, text
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import get_db, settings
 from app.models import Product
 from app.schemas import ProductCreate, ProductResponse
 from app.dependencies import get_admin_user
 from app.redis_client import redis_client
+from app.security import limiter
 
 
 router = APIRouter(
@@ -63,7 +67,8 @@ def create_product(
         name=product_data.name,
         description=product_data.description,
         price=product_data.price,
-        stock=product_data.stock
+        stock=product_data.stock,
+        image_url=product_data.image_url,
     )
 
     db.add(product)
@@ -145,6 +150,129 @@ def get_products(
     return product_data
 
 
+@router.get(
+    "/search",
+    response_model=list[ProductResponse],
+)
+@limiter.limit("30/minute")
+def search_products(
+    request: Request,
+    response: Response,
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    terms = [term for term in q.strip().lower().split() if term]
+    if not terms:
+        return []
+
+    query = db.query(Product).filter(Product.is_active.is_(True))
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text(
+                "SELECT set_config("
+                "'pg_trgm.word_similarity_threshold', "
+                ":threshold, true"
+                ")"
+            ),
+            {"threshold": str(settings.PRODUCT_SEARCH_SIMILARITY_THRESHOLD)},
+        )
+        search_vector = literal_column(
+            "to_tsvector("
+            "'english', "
+            "coalesce(products.name, '') || ' ' || "
+            "coalesce(products.description, '')"
+            ")"
+        )
+        ts_query = func.websearch_to_tsquery("english", q)
+        prefix_terms = []
+        fuzzy_terms = []
+        for term in terms:
+            escaped_term = (
+                term.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            word_prefix = or_(
+                Product.name.ilike(f"{escaped_term}%", escape="\\"),
+                Product.name.ilike(f"% {escaped_term}%", escape="\\"),
+            )
+            if len(term) >= 5:
+                word_prefix = or_(
+                    word_prefix,
+                    Product.description.ilike(f"{escaped_term}%", escape="\\"),
+                    Product.description.ilike(f"% {escaped_term}%", escape="\\"),
+                )
+            prefix_terms.append(
+                word_prefix
+            )
+            if len(term) >= 3:
+                fuzzy_terms.append(
+                    or_(
+                        func.lower(Product.name).op("%>")(term),
+                        func.lower(Product.description).op("%>")(term),
+                    )
+                )
+            else:
+                fuzzy_terms.append(None)
+        partial_terms = [
+            or_(prefix_term, fuzzy_terms[index])
+            if fuzzy_terms[index] is not None
+            else prefix_term
+            for index, prefix_term in enumerate(prefix_terms)
+        ]
+        partial_match = and_(*partial_terms)
+        match_conditions = [partial_match]
+        if len(q.strip()) >= 3:
+            match_conditions.append(search_vector.op("@@")(ts_query))
+        name_similarity = sum(
+            func.word_similarity(term, func.lower(Product.name))
+            for term in terms
+        )
+        description_similarity = sum(
+            func.word_similarity(
+                term,
+                func.lower(func.coalesce(Product.description, "")),
+            )
+            for term in terms
+        )
+        query = query.filter(or_(*match_conditions)).order_by(
+            case(
+                (Product.name.ilike(f"{terms[0]}%", escape="\\"), 0),
+                else_=1,
+            ),
+            name_similarity.desc(),
+            description_similarity.desc(),
+            func.ts_rank(search_vector, ts_query).desc(),
+            Product.name,
+        )
+    else:
+        prefix_terms = []
+        for term in terms:
+            escaped_term = (
+                term.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            word_prefix = or_(
+                Product.name.ilike(f"{escaped_term}%", escape="\\"),
+                Product.name.ilike(f"% {escaped_term}%", escape="\\"),
+            )
+            if len(term) >= 3:
+                word_prefix = or_(
+                    word_prefix,
+                    Product.description.ilike(f"{escaped_term}%", escape="\\"),
+                    Product.description.ilike(f"% {escaped_term}%", escape="\\"),
+                )
+            prefix_terms.append(word_prefix)
+        query = query.filter(and_(*prefix_terms)).order_by(
+            case((Product.name.ilike(f"{terms[0]}%"), 0), else_=1),
+            Product.name,
+        )
+
+    return query.limit(limit).all()
+
+
 # ============================================================
 # GET PRODUCT BY ID
 # ============================================================
@@ -202,6 +330,8 @@ def update_product(
     product.description = product_data.description
     product.price = product_data.price
     product.stock = product_data.stock
+    if "image_url" in product_data.model_fields_set:
+        product.image_url = product_data.image_url
 
     db.commit()
     db.refresh(product)

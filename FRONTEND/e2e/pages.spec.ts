@@ -34,11 +34,47 @@ const order: Order = {
   delivery_address: "123 Test Street, Test City",
   status: "confirmed",
   items: [
-    { id: 201, product_id: product.id, quantity: 1, price: product.price },
+    {
+      id: 201,
+      product_id: product.id,
+      quantity: 1,
+      price: product.price,
+      product: {
+        id: product.id,
+        name: product.name,
+        description: product.description,
+        image_url: product.image_url,
+      },
+    },
   ],
 };
 
 async function seedSession(page: Page, user: User = customer) {
+  let nextMessageId = 501;
+  await page.routeWebSocket(`${apiBase.replace(/^http/, "ws")}/ws`, (socket) => {
+    socket.onMessage((message) => {
+      const event = JSON.parse(String(message)) as {
+        type?: string;
+        body?: string;
+        user_id?: number;
+      };
+      if (event.type === "auth") socket.send(JSON.stringify({ type: "auth.ok" }));
+      if (event.type === "chat.send" && event.body) {
+        socket.send(JSON.stringify({
+          type: "chat.message",
+          message: {
+            id: nextMessageId++,
+            user_id: event.user_id ?? user.id,
+            sender_id: user.id,
+            sender_name: user.name,
+            sender_role: user.role,
+            body: event.body,
+            created_at: new Date().toISOString(),
+          },
+        }));
+      }
+    });
+  });
   await page.addInitScript(() => {
     localStorage.setItem("access_token", "e2e-access-token");
   });
@@ -110,6 +146,20 @@ test.describe("storefront and protected pages", () => {
     await expect(page.getByText(`Name: ${customer.name}`)).toBeVisible();
     await expect(page.getByText(`Email: ${customer.email}`)).toBeVisible();
     await expect(page.getByText("Role: customer")).toBeVisible();
+  });
+
+  test("customer support sends and displays a live chat message", async ({ page }) => {
+    await seedSession(page);
+    await page.route(`${apiBase}/chat/messages*`, (route) =>
+      route.fulfill({ json: [] })
+    );
+    await page.goto("/support");
+
+    await expect(page.getByRole("heading", { name: "Customer support" })).toBeVisible();
+    await expect(page.getByText("Real-time connection: connected")).toBeVisible();
+    await page.getByRole("textbox", { name: "Message" }).fill("Can you help me?");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByText("Can you help me?")).toBeVisible();
   });
 
   test("cart displays its products and removes an item", async ({ page }) => {
@@ -189,7 +239,8 @@ test.describe("storefront and protected pages", () => {
 
     await expect(page).toHaveURL(/\/orders\/101$/);
     await expect(page.getByRole("heading", { name: "Order #101" })).toBeVisible();
-    await expect(page.getByText("Product #1 × 1")).toBeVisible();
+    await expect(page.getByText(product.name)).toBeVisible();
+    await expect(page.getByText("1 × ₹1250.00")).toBeVisible();
     expect(submittedAddress).toBe(order.delivery_address);
   });
 
@@ -208,7 +259,8 @@ test.describe("storefront and protected pages", () => {
     await page.getByRole("link", { name: "Order #101" }).click();
     await expect(page).toHaveURL(/\/orders\/101$/);
     await expect(page.getByText("Deliver to: 123 Test Street, Test City")).toBeVisible();
-    await expect(page.getByText("Product #1 × 1")).toBeVisible();
+    await expect(page.getByText(product.name)).toBeVisible();
+    await expect(page.getByText("1 × ₹1250.00")).toBeVisible();
   });
 
   test("admin creates a product and can open order management", async ({ page }) => {

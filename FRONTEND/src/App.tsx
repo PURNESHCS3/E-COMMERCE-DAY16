@@ -13,6 +13,8 @@ const Cart = lazy(() => import("./pages/Cart"));
 const Checkout = lazy(() => import("./pages/Checkout"));
 const Orders = lazy(() => import("./pages/Orders"));
 const AdminProducts = lazy(() => import("./pages/AdminProducts"));
+const Support = lazy(() => import("./pages/Support"));
+const Jobs = lazy(() => import("./pages/Jobs"));
 
 export default function App() {
   const theme = useThemeStore((state) => state.theme);
@@ -38,6 +40,8 @@ export default function App() {
             <Route path="/checkout" element={<Checkout />} />
             <Route path="/orders" element={<Orders />} />
             <Route path="/orders/:id" element={<Orders />} />
+            <Route path="/support" element={<Support />} />
+            <Route path="/jobs" element={<Jobs />} />
           </Route>
 
           <Route element={<ProtectedRoute requiredRole="admin" />}>
