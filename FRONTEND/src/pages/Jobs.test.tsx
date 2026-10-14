@@ -205,7 +205,7 @@ describe("background jobs", () => {
       ),
       http.get(
         "http://127.0.0.1:8000/api/jobs/:jobId/download",
-        () => new HttpResponse("%PDF-1.4 test", {
+        () => new HttpResponse(new Uint8Array([37, 80, 68, 70]), {
           headers: { "Content-Type": "application/pdf" },
         }),
       ),
