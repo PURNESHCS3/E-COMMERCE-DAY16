@@ -2,13 +2,7 @@ name: Frontend CI
 
 on:
   push:
-    paths:
-      - "FRONTEND/**"
-      - ".github/workflows/frontend-ci.yml"
   pull_request:
-    paths:
-      - "FRONTEND/**"
-      - ".github/workflows/frontend-ci.yml"
   workflow_dispatch:
 
 jobs:
@@ -25,6 +19,7 @@ jobs:
           cache: npm
           cache-dependency-path: FRONTEND/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
