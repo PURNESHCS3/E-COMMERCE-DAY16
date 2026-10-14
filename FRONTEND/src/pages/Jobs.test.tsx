@@ -30,15 +30,18 @@ function renderJobs() {
     defaultOptions: { queries: { retry: false } },
   });
 
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
-        <RealtimeProvider>
-          <Jobs />
-        </RealtimeProvider>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  return {
+    queryClient,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <RealtimeProvider>
+            <Jobs />
+          </RealtimeProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 describe("background jobs", () => {
@@ -213,7 +216,7 @@ describe("background jobs", () => {
       createObjectURL: createObjectUrl,
       revokeObjectURL: revokeObjectUrl,
     }));
-    renderJobs();
+    const { queryClient } = renderJobs();
 
     expect(await screen.findByText("Invoice for order #42")).toBeInTheDocument();
     currentJob = {
@@ -223,6 +226,7 @@ describe("background jobs", () => {
       message: "Invoice is ready to download.",
       result: { order_id: 42, filename: "invoice.pdf" },
     };
+    queryClient.setQueryData(["background-jobs", 7], [currentJob]);
 
     await waitFor(
       () => {
