@@ -6,12 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAuthStore } from "../stores/authStore";
 import { useNotificationStore } from "../stores/notificationStore";
 import { RealtimeProvider } from "../realtime/RealtimeProvider";
+import * as jobsService from "../services/jobs";
 import { server } from "../test/server";
 import type { BackgroundJob } from "../types";
 import Jobs from "./Jobs";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const runningJob: BackgroundJob = {
@@ -203,19 +205,10 @@ describe("background jobs", () => {
       http.get("http://127.0.0.1:8000/api/jobs/", () =>
         HttpResponse.json([currentJob]),
       ),
-      http.get(
-        "http://127.0.0.1:8000/api/jobs/:jobId/download",
-        () => new HttpResponse(new Uint8Array([37, 80, 68, 70]), {
-          headers: { "Content-Type": "application/pdf" },
-        }),
-      ),
     );
-    const createObjectUrl = vi.fn(() => "blob:invoice");
-    const revokeObjectUrl = vi.fn();
-    vi.stubGlobal("URL", Object.assign(class MockURL extends URL {}, {
-      createObjectURL: createObjectUrl,
-      revokeObjectURL: revokeObjectUrl,
-    }));
+    const downloadInvoice = vi
+      .spyOn(jobsService, "downloadInvoice")
+      .mockResolvedValue();
     const { queryClient } = renderJobs();
 
     expect(await screen.findByText("Invoice for order #42")).toBeInTheDocument();
@@ -253,6 +246,6 @@ describe("background jobs", () => {
         ]),
       );
     });
-    expect(createObjectUrl).toHaveBeenCalled();
+    expect(downloadInvoice).toHaveBeenCalledWith(runningJob.id, 42);
   });
 });
