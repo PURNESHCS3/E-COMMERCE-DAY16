@@ -149,7 +149,7 @@ test.describe("login page", () => {
     await page.locator("form").getByRole("button", { name: "Login" }).click();
 
     expect(submittedBody).toEqual({ email: user.email, password: "secret123" });
-    expect(authorizationHeader).toBeDefined();
+    await expect.poll(() => authorizationHeader).toBeDefined();
     await expect(page).toHaveURL(/\/account$/);
     await expect(
       page.getByRole("heading", { name: `Hello, ${user.name.split(" ")[0]}` }),
