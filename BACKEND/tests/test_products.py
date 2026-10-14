@@ -16,6 +16,8 @@ def test_create_product(
         json={
             "name": "Laptop",
             "description": "Test laptop",
+            "features": "Lightweight design\nFast processor",
+            "category": "Electronics",
             "price": 50000,
             "stock": 10
         }
@@ -27,6 +29,8 @@ def test_create_product(
 
     assert data["name"] == "Laptop"
     assert data["stock"] == 10
+    assert data["features"] == "Lightweight design\nFast processor"
+    assert data["category"] == "Electronics"
 
 
 def test_admin_can_create_product_with_public_https_image_url(
@@ -140,6 +144,98 @@ def test_get_products(
     data = response.json()
 
     assert len(data) >= 1
+
+
+def test_semantic_search_returns_retrieved_catalog_products(
+    client,
+    test_product,
+    monkeypatch,
+):
+    retrieved = []
+
+    def fake_retrieve(_db, query, *, category, max_results):
+        retrieved.append((query, category, max_results))
+        return "", [{"product_id": test_product.id}]
+
+    monkeypatch.setattr(
+        "app.routers.products.retrieve_catalog_context",
+        fake_retrieve,
+    )
+
+    response = client.get(
+        "/api/products/semantic-search",
+        params={
+            "q": "something comfortable for travel",
+            "category": "Footwear",
+            "limit": 12,
+        },
+    )
+
+    assert response.status_code == 200
+    assert [product["id"] for product in response.json()] == [test_product.id]
+    assert retrieved == [
+        ("something comfortable for travel", "Footwear", 12)
+    ]
+
+
+def test_product_categories_and_catalog_filter(client, admin_headers):
+    for name, category in (
+        ("Wireless headset", "Electronics"),
+        ("Running shoes", "Footwear"),
+    ):
+        response = client.post(
+            "/api/products/",
+            headers=admin_headers,
+            json={
+                "name": name,
+                "price": 100,
+                "stock": 2,
+                "category": category,
+            },
+        )
+        assert response.status_code == 200
+
+    categories = client.get("/api/products/categories")
+    assert categories.status_code == 200
+    assert categories.json() == [
+        "Electronics",
+        "Footwear",
+        "Clothing",
+        "Home & Kitchen",
+        "Beauty & Personal Care",
+        "Books",
+        "Sports & Outdoors",
+        "Toys & Games",
+        "Accessories",
+        "Grocery",
+        "Other",
+    ]
+
+    electronics = client.get("/api/products/", params={"category": "Electronics"})
+    assert electronics.status_code == 200
+    assert [product["name"] for product in electronics.json()] == ["Wireless headset"]
+
+    searched = client.get(
+        "/api/products/search",
+        params={"q": "shoes", "category": "Electronics"},
+    )
+    assert searched.status_code == 200
+    assert searched.json() == []
+
+
+def test_product_category_must_be_supported(client, admin_headers):
+    response = client.post(
+        "/api/products/",
+        headers=admin_headers,
+        json={
+            "name": "Unknown category item",
+            "price": 100,
+            "stock": 2,
+            "category": "Unknown category",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_product_search_matches_partial_letters_as_they_are_typed(client, db):

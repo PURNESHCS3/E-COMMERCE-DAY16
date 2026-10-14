@@ -78,19 +78,26 @@ export default function Support() {
 
   return (
     <main className={`mx-auto ${isAdmin ? "max-w-6xl" : "max-w-7xl"} px-4 py-8 sm:px-6`}>
-      <h1 className="mb-2 text-3xl font-bold">Customer support</h1>
-      <p className="mb-6 text-sm text-slate-600">
-        Real-time connection: <span className="font-medium">{status}</span>
-      </p>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="mb-1 text-xs font-semibold tracking-[0.16em] text-emerald-800">HERE TO HELP</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-950">Customer support</h1>
+          <p className="mt-2 text-sm text-slate-600">Send us a message and we’ll be happy to help.</p>
+        </div>
+        <p className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-2 text-sm text-slate-600">
+          <span className={`h-2 w-2 rounded-full ${status === "connected" ? "bg-emerald-600" : "bg-amber-500"}`} aria-hidden="true" />
+          Real-time connection: <span className="font-medium capitalize text-slate-900">{status}</span>
+        </p>
+      </div>
 
-      <div className={`grid overflow-hidden rounded-xl border bg-white ${
+      <div className={`support-panel grid overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm ${
         isAdmin
           ? "min-h-[32rem] md:grid-cols-[16rem_1fr]"
           : "min-h-[36rem] md:h-[calc(100vh-13rem)] md:min-h-[36rem]"
       }`}>
         {isAdmin && (
-          <aside className="border-b p-4 md:border-b-0 md:border-r">
-            <h2 className="mb-3 font-semibold">Conversations</h2>
+          <aside className="support-conversations border-b border-stone-200 bg-[#fafaf8] p-4 md:border-b-0 md:border-r">
+            <h2 className="mb-3 font-semibold text-slate-950">Conversations</h2>
             {conversationsQuery.error && (
               <p role="alert" className="text-sm text-red-700">Could not load conversations.</p>
             )}
@@ -104,10 +111,10 @@ export default function Support() {
                     type="button"
                     aria-pressed={activeUserId === conversation.user_id}
                     onClick={() => setSelectedUserId(conversation.user_id)}
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-100 aria-pressed:bg-slate-100"
+                    className="support-conversation-button w-full rounded-xl px-3 py-2 text-left text-sm transition hover:bg-emerald-50 aria-pressed:bg-emerald-900 aria-pressed:text-white"
                   >
                     <span className="block font-medium">{conversation.user_name}</span>
-                    <span className="block truncate text-slate-500">{conversation.last_message}</span>
+                    <span className="support-conversation-preview block truncate text-slate-500">{conversation.last_message}</span>
                   </button>
                 </li>
               ))}
@@ -116,13 +123,13 @@ export default function Support() {
         )}
 
         <section className={`flex min-w-0 flex-col ${isAdmin ? "min-h-[32rem]" : "min-h-[36rem]"}`}>
-          <h2 className="border-b px-4 py-3 font-semibold">
+          <h2 className="support-chat-heading border-b border-stone-200 bg-white px-4 py-3 font-semibold text-slate-950">
             {isAdmin ? selectedConversation?.user_name ?? "Select a conversation" : "Chat with support"}
           </h2>
           <ul
             ref={conversationListRef}
             aria-label="Chat messages"
-            className={`flex-1 space-y-3 overflow-y-auto p-4 ${isAdmin ? "" : "md:px-8 md:py-6"}`}
+            className={`support-message-list flex-1 space-y-3 overflow-y-auto bg-[#fafaf8] p-4 ${isAdmin ? "" : "md:px-8 md:py-6"}`}
           >
             {messagesQuery.error && (
               <li role="alert" className="text-sm text-red-700">Could not load chat history.</li>
@@ -133,7 +140,9 @@ export default function Support() {
                 <li
                   key={message.id}
                   className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
-                    ownMessage ? "ml-auto bg-slate-900 text-white" : "bg-slate-100 text-slate-900"
+                    ownMessage
+                      ? "ml-auto bg-emerald-900 text-white shadow-sm"
+                      : "border border-stone-200 bg-white text-slate-900 shadow-sm"
                   }`}
                 >
                   <p className="mb-1 text-xs font-medium opacity-75">{message.sender_name}</p>
@@ -151,7 +160,7 @@ export default function Support() {
             )}
           </ul>
           {error && <p role="alert" className="px-4 pb-2 text-sm text-red-700">{error}</p>}
-          <form onSubmit={submit} className={`flex gap-2 border-t p-3 ${isAdmin ? "" : "md:px-6 md:py-4"}`}>
+          <form onSubmit={submit} className={`flex gap-2 border-t border-stone-200 bg-white p-3 ${isAdmin ? "" : "md:px-6 md:py-4"}`}>
             <label htmlFor="support-message" className="sr-only">Message</label>
             <input
               id="support-message"
@@ -160,9 +169,9 @@ export default function Support() {
               maxLength={2000}
               disabled={status !== "connected" || activeUserId === null}
               placeholder={status === "connected" ? "Write a message…" : "Connecting to support…"}
-              className="min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none focus:border-slate-900"
+              className="min-w-0 flex-1 rounded-xl border border-stone-300 bg-[#fafaf8] px-3 py-2 text-sm outline-none focus:border-emerald-800 focus:ring-2 focus:ring-emerald-800/15"
             />
-            <Button type="submit" disabled={status !== "connected" || !draft.trim() || activeUserId === null}>
+            <Button type="submit" className="rounded-xl" disabled={status !== "connected" || !draft.trim() || activeUserId === null}>
               Send
             </Button>
           </form>

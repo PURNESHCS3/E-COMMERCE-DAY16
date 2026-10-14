@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "qwen/qwen3.8-27b"
     GEMINI_MODEL: str = "gemini-3.8-flash"
     CHROMA_PERSIST_DIRECTORY: str = str(BACKEND_DIR / "app" / "vector_store")
+    AI_RESPONSE_CACHE_TTL_SECONDS: int = Field(default=3600, ge=60, le=86400)
+    AI_DAILY_PROVIDER_CALL_LIMIT: int = Field(default=100, ge=1, le=100000)
+    AI_DAILY_ESTIMATED_TOKEN_LIMIT: int = Field(default=300000, ge=1, le=100000000)
+    AI_MAX_COMPLETION_TOKENS: int = Field(default=2048, ge=128, le=8192)
 
     REDIS_URL: str = "redis://localhost:6379/0"
     CORS_ORIGINS: str = (

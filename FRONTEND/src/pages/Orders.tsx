@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileDown } from "lucide-react";
+import { ArrowLeft, ClipboardList, FileDown, MapPin, PackageCheck } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
@@ -113,79 +113,106 @@ export default function Orders() {
   const renderOrder = (order: Order) => (
     <li
       key={order.id}
-      className={showStatusTabs
-        ? "rounded-lg border bg-white p-4 shadow-sm"
-        : "py-5"}
+      className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm sm:p-6"
     >
-      {!id && <Link to={`${ordersPath}/${order.id}`} className="font-semibold hover:underline">Order #{order.id}</Link>}
-      <div className="mt-1 flex flex-wrap justify-between gap-2 text-sm text-slate-600">
-        <span className="capitalize">Status: {order.status.replaceAll("_", " ")}</span>
-        {user?.role === "admin" && <span>Customer #{order.user_id}</span>}
-        <span>₹{Number(order.total_amount).toFixed(2)}</span>
-        {order.created_at && <time dateTime={order.created_at}>{new Date(order.created_at).toLocaleDateString()}</time>}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          {!id ? (
+            <Link to={`${ordersPath}/${order.id}`} className="text-lg font-semibold text-slate-950 hover:text-emerald-800 hover:underline">
+              Order #{order.id}
+            </Link>
+          ) : (
+            <p className="text-lg font-semibold text-slate-950">Order #{order.id}</p>
+          )}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-500">
+            {order.created_at && (
+              <time dateTime={order.created_at}>{new Date(order.created_at).toLocaleDateString()}</time>
+            )}
+            {user?.role === "admin" && <span>Customer #{order.user_id}</span>}
+          </div>
+        </div>
+        <div className="flex flex-col items-start gap-2 sm:items-end">
+          <span className="text-lg font-semibold tracking-tight text-slate-950">
+            ₹{Number(order.total_amount).toFixed(2)}
+          </span>
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium capitalize ${
+            order.status === "delivered"
+              ? "bg-emerald-50 text-emerald-800"
+              : order.status === "cancelled"
+                ? "bg-red-50 text-red-700"
+                : "bg-amber-50 text-amber-900"
+          }`}>
+            <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+            Status: {order.status.replaceAll("_", " ")}
+          </span>
+        </div>
       </div>
       {order.delivery_address && (
-        <p className="mt-3 text-sm text-slate-600">
-          <span className="font-medium text-slate-800">Deliver to:</span> {order.delivery_address}
+        <p className="mt-4 flex items-start gap-2 border-t border-stone-100 pt-4 text-sm text-slate-600">
+          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-emerald-800" aria-hidden="true" />
+          <span><span className="font-medium text-slate-800">Deliver to:</span> {order.delivery_address}</span>
         </p>
       )}
       {order.status === "cancelled" && (
-        <p role="status" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+        <p role="status" className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
           This order was cancelled by the store administrator.
         </p>
       )}
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="mt-3"
-        disabled={invoiceJob.isPending && invoiceJob.variables === order.id}
-        onClick={() => invoiceJob.mutate(order.id)}
-      >
-        <FileDown className="mr-2 h-4 w-4" />
-        {invoiceJob.isPending && invoiceJob.variables === order.id
-          ? "Queueing invoice..."
-          : "Generate invoice PDF"}
-      </Button>
-      {user?.role === "admin" && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {nextStatus[order.status] && (
-            <Button
-              type="button"
-              size="sm"
-              disabled={updateStatus.isPending && updateStatus.variables?.orderId === order.id}
-              onClick={() => handleStatusUpdate(order, nextStatus[order.status].status)}
-            >
-              {updateStatus.isPending && updateStatus.variables?.orderId === order.id
-                ? "Updating..."
-                : nextStatus[order.status].label}
-            </Button>
-          )}
-          {order.status === "confirmed" && (
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              disabled={cancelOrder.isPending && cancelOrder.variables === order.id}
-              onClick={() => handleCancel(order)}
-            >
-              {cancelOrder.isPending && cancelOrder.variables === order.id ? "Cancelling..." : "Cancel order"}
-            </Button>
-          )}
-        </div>
-      )}
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-stone-100 pt-4">
+        <Button
+          type="button"
+          size="sm"
+          className="rounded-full bg-emerald-800 text-white shadow-sm hover:bg-emerald-900"
+          disabled={invoiceJob.isPending && invoiceJob.variables === order.id}
+          onClick={() => invoiceJob.mutate(order.id)}
+        >
+          <FileDown className="mr-2 h-4 w-4" />
+          {invoiceJob.isPending && invoiceJob.variables === order.id
+            ? "Queueing invoice..."
+            : "Generate invoice PDF"}
+        </Button>
+        {user?.role === "admin" && (
+          <>
+            {nextStatus[order.status] && (
+              <Button
+                type="button"
+                size="sm"
+                className="rounded-full"
+                disabled={updateStatus.isPending && updateStatus.variables?.orderId === order.id}
+                onClick={() => handleStatusUpdate(order, nextStatus[order.status].status)}
+              >
+                {updateStatus.isPending && updateStatus.variables?.orderId === order.id
+                  ? "Updating..."
+                  : nextStatus[order.status].label}
+              </Button>
+            )}
+            {order.status === "confirmed" && (
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                className="rounded-full"
+                disabled={cancelOrder.isPending && cancelOrder.variables === order.id}
+                onClick={() => handleCancel(order)}
+              >
+                {cancelOrder.isPending && cancelOrder.variables === order.id ? "Cancelling..." : "Cancel order"}
+              </Button>
+            )}
+          </>
+        )}
+      </div>
       {id && order.items && order.items.length > 0 && (
-        <ul className="mt-4 space-y-2 border-t pt-4 text-sm text-slate-600">
+        <ul className="mt-5 divide-y divide-stone-100 rounded-xl border border-stone-200 bg-[#fafaf8] px-3 text-sm text-slate-600 sm:px-4">
           {order.items.map((item) => (
-            <li key={item.id} className="flex items-center justify-between gap-4 py-2">
+            <li key={item.id} className="flex items-center justify-between gap-4 py-3">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white">
                   {imageSrc(item.product?.image_url ?? null) ? (
                     <img
                       src={imageSrc(item.product?.image_url ?? null) ?? undefined}
                       alt={item.product?.name ?? "Ordered product"}
                       referrerPolicy="no-referrer"
-                      className="h-full w-full object-cover"
+                      className="h-full w-full object-contain p-1"
                     />
                   ) : (
                     <span className="px-1 text-center text-[10px] text-slate-400">No image</span>
@@ -217,17 +244,33 @@ export default function Orders() {
 
   return (
     <main className={`mx-auto ${showStatusTabs ? "max-w-7xl" : "max-w-4xl"} px-4 py-10 sm:px-6`}>
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <h1 className="text-3xl font-bold">
-          {id ? `Order #${id}` : user?.role === "admin" ? "All orders" : "Your orders"}
-        </h1>
-        {id && <Link to={ordersPath} className="text-sm underline">All orders</Link>}
+      {id && (
+        <Link to={ordersPath} className="mb-5 inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-white hover:text-slate-950">
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" /> All orders
+        </Link>
+      )}
+      <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="mb-1 text-xs font-semibold tracking-[0.16em] text-emerald-800">
+            {user?.role === "admin" ? "STORE MANAGEMENT" : "YOUR SHOPHUB"}
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
+            {id ? `Order #${id}` : user?.role === "admin" ? "All orders" : "Your orders"}
+          </h1>
+          {!id && <p className="mt-2 text-sm text-slate-500">Track your purchases and delivery progress.</p>}
+        </div>
+        {id && (
+          <span className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white px-3 py-2 text-sm text-slate-600">
+            <PackageCheck className="h-4 w-4 text-emerald-800" aria-hidden="true" />
+            Order details
+          </span>
+        )}
       </div>
       {error && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {notice && <p role="status" className="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-800">{notice}</p>}
       {!error && showStatusTabs && (
         <>
-          <div role="tablist" aria-label="Filter orders by status" className="mb-6 flex gap-2 overflow-x-auto border-b">
+          <div role="tablist" aria-label="Filter orders by status" className="mb-6 flex gap-1 overflow-x-auto rounded-2xl border border-stone-200 bg-white p-2 shadow-sm">
             {orderColumns.map((column) => {
               const count = orders.filter((order) => order.status === column.status).length;
               const selected = selectedStatus === column.status;
@@ -240,14 +283,14 @@ export default function Orders() {
                   aria-selected={selected}
                   aria-controls="order-status-panel"
                   onClick={() => setSelectedStatus(column.status)}
-                  className={`shrink-0 border-b-2 px-4 py-3 text-sm font-medium transition ${
+                  className={`shrink-0 rounded-xl px-4 py-3 text-sm font-medium transition ${
                     selected
-                      ? "border-slate-900 text-slate-900"
-                      : "border-transparent text-slate-500 hover:text-slate-900"
+                      ? "bg-emerald-900 text-white shadow-sm"
+                      : "text-slate-500 hover:bg-stone-100 hover:text-slate-900"
                   }`}
                 >
                   {column.title}
-                  <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs">
+                  <span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${selected ? "bg-white/15 text-white" : "bg-stone-100 text-slate-600"}`}>
                     {count}
                   </span>
                 </button>
@@ -262,7 +305,7 @@ export default function Orders() {
             {displayedOrders.length > 0 ? (
               <ul className="space-y-3">{displayedOrders.map(renderOrder)}</ul>
             ) : (
-              <p className="rounded-lg border border-dashed py-10 text-center text-slate-500">
+              <p className="rounded-2xl border border-dashed border-stone-300 bg-white py-12 text-center text-slate-500">
                 No {orderColumns.find((column) => column.status === selectedStatus)?.title.toLowerCase()} orders.
               </p>
             )}
@@ -271,9 +314,18 @@ export default function Orders() {
       )}
       {!error && !showStatusTabs && (
         displayedOrders.length > 0 ? (
-          <ul className="divide-y border-y">{displayedOrders.map(renderOrder)}</ul>
+          <ul className="space-y-4">{displayedOrders.map(renderOrder)}</ul>
         ) : (
-          <p className="border-y py-10 text-center text-slate-500">No orders yet.</p>
+          <div className="rounded-2xl border border-dashed border-stone-300 bg-white px-6 py-14 text-center">
+            <ClipboardList className="mx-auto mb-3 h-9 w-9 text-emerald-800" aria-hidden="true" />
+            <p className="font-medium text-slate-900">No orders yet.</p>
+            <p className="mt-1 text-sm text-slate-500">Your purchases will appear here when you place an order.</p>
+            {!id && user?.role !== "admin" && (
+              <Link to="/" className="mt-4 inline-flex text-sm font-medium text-emerald-900 hover:underline">
+                Browse products
+              </Link>
+            )}
+          </div>
         )
       )}
     </main>

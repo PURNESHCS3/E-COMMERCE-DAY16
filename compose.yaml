@@ -1,0 +1,142 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shophub}
+      POSTGRES_USER: ${POSTGRES_USER:-shophub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.deploy}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  migrate:
+    build:
+      context: ./BACKEND
+    restart: "no"
+    environment: &backend-environment
+      DATABASE_URL: "postgresql+psycopg://${POSTGRES_USER:-shophub}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-shophub}"
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env.deploy}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env.deploy}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      PRODUCTION: "true"
+      CORS_ORIGINS: ${APP_ORIGIN:?Set APP_ORIGIN to the exact frontend origin}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-qwen/qwen3.8-27b}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      CHROMA_PERSIST_DIRECTORY: /app/app/vector_store
+      AI_RESPONSE_CACHE_TTL_SECONDS: ${AI_RESPONSE_CACHE_TTL_SECONDS:-3600}
+      AI_DAILY_PROVIDER_CALL_LIMIT: ${AI_DAILY_PROVIDER_CALL_LIMIT:-100}
+      AI_DAILY_ESTIMATED_TOKEN_LIMIT: ${AI_DAILY_ESTIMATED_TOKEN_LIMIT:-300000}
+      AI_MAX_COMPLETION_TOKENS: ${AI_MAX_COMPLETION_TOKENS:-2048}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ./BACKEND
+    restart: unless-stopped
+    environment: *backend-environment
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes:
+      - uploads-data:/app/app/uploads
+      - chroma-data:/app/app/vector_store
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/healthz', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    build:
+      context: ./BACKEND
+    restart: unless-stopped
+    environment: *backend-environment
+    command:
+      [
+        "celery",
+        "-A",
+        "app.celery_app.celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--pool=prefork",
+      ]
+    volumes:
+      - uploads-data:/app/app/uploads
+      - chroma-data:/app/app/vector_store
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  beat:
+    build:
+      context: ./BACKEND
+    restart: unless-stopped
+    environment: *backend-environment
+    command:
+      [
+        "celery",
+        "-A",
+        "app.celery_app.celery_app",
+        "beat",
+        "--loglevel=INFO",
+      ]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./FRONTEND
+      args:
+        VITE_API_URL: /api
+        VITE_WS_URL: ""
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  redis-data:
+  uploads-data:
+  chroma-data:

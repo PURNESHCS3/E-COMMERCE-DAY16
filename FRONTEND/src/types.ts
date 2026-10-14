@@ -27,6 +27,8 @@ export interface Product {
   id: number;
   name: string;
   description: string | null;
+  features?: string | null;
+  category?: string | null;
   price: number;
   stock: number;
   image_url: string | null;
@@ -36,6 +38,8 @@ export interface Product {
 export interface ProductPayload {
   name: string;
   description: string;
+  features: string;
+  category: string | null;
   price: number;
   stock: number;
   image_url?: string | null;
@@ -44,6 +48,7 @@ export interface ProductPayload {
 export interface ProductPageParams {
   skip?: number;
   limit?: number;
+  category?: string;
 }
 
 export interface BackgroundJobResult {
@@ -65,6 +70,29 @@ export interface BackgroundJob {
   result: BackgroundJobResult | null;
   error: string | null;
   created_at: string | null;
+}
+
+export interface AIUsageReport {
+  date: string;
+  daily_limit: number;
+  total_requests: number;
+  remaining_requests: number;
+  provider_requests: Record<string, number>;
+  estimated_token_limit: number;
+  estimated_tokens_used: number;
+  estimated_tokens_remaining: number;
+  details: AIUsageDetail[];
+}
+
+export interface AIUsageDetail {
+  provider: string;
+  model: string;
+  feature: string;
+  attempts: number;
+  successes: number;
+  failures: number;
+  cache_hits: number;
+  estimated_tokens: number;
 }
 
 export type Cart = Record<string, number>;
@@ -156,6 +184,27 @@ export interface AIProductSource {
 export interface AIProviderInfo {
   name: string;
   model: string;
+}
+
+export interface AIProductDescriptionResponse {
+  description: string;
+  provider: string;
+  cached: boolean;
+}
+
+export interface AIContentModerationResponse {
+  approved: boolean;
+  reason: string;
+  provider: string;
+  cached: boolean;
+}
+
+export interface AIProductAgentResponse {
+  answer: string;
+  provider: string;
+  sources: AIProductSource[];
+  tool_calls: string[];
+  cached: boolean;
 }
 
 export type ClientRealtimeEvent = {

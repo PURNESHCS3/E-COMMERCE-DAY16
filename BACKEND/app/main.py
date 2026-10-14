@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -5,10 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from redis.exceptions import RedisError
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.database import settings
+from app.database import engine, settings
+from app.redis_client import redis_client
 from app.security import limiter
 from app.routers import (
     auth,
@@ -20,6 +25,9 @@ from app.routers import (
     jobs,
     ai,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI(
@@ -68,6 +76,21 @@ app.include_router(websocket.router)
 app.include_router(chat.router)
 app.include_router(jobs.router)
 app.include_router(ai.router)
+
+
+@app.get("/healthz", include_in_schema=False)
+def health_check():
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        redis_client.ping()
+    except (SQLAlchemyError, RedisError) as error:
+        logger.warning("Health check failed (%s).", type(error).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail="A required application dependency is unavailable.",
+        )
+    return {"status": "ok"}
 
 
 def accepts_webp(accept_header: str) -> bool:

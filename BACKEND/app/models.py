@@ -54,6 +54,10 @@ class Product(Base):
 
     description = Column(String(1000))
 
+    features = Column(String(2000))
+
+    category = Column(String(80), nullable=True, index=True)
+
     price = Column(Float, nullable=False)
 
     stock = Column(Integer, nullable=False, default=0)

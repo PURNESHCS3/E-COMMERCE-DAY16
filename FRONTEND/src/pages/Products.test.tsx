@@ -21,6 +21,67 @@ function renderProducts() {
 }
 
 describe("product catalog", () => {
+  it("filters catalog products by a selected category and returns to all products", async () => {
+    const categorizedProduct = {
+      ...testProduct,
+      category: "Electronics",
+      name: "Categorized headphones",
+    };
+    const requestedCategories: Array<string | null> = [];
+    server.use(
+      http.get("http://127.0.0.1:8000/api/products/", ({ request }) => {
+        const category = new URL(request.url).searchParams.get("category");
+        requestedCategories.push(category);
+        return HttpResponse.json(
+          category === "Electronics"
+            ? [categorizedProduct]
+            : category === "Books"
+              ? []
+              : [testProduct],
+        );
+      }),
+      http.get("http://127.0.0.1:8000/api/products/categories", () =>
+        HttpResponse.json([
+          "Electronics",
+          "Footwear",
+          "Clothing",
+          "Home & Kitchen",
+          "Beauty & Personal Care",
+          "Books",
+          "Sports & Outdoors",
+          "Toys & Games",
+          "Accessories",
+          "Grocery",
+          "Other",
+        ]),
+      ),
+    );
+    renderProducts();
+
+    expect(await screen.findByRole("heading", { name: testProduct.name }))
+      .toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Electronics" }));
+
+    expect(await screen.findByRole("heading", { name: categorizedProduct.name }))
+      .toBeInTheDocument();
+    await waitFor(() => expect(requestedCategories).toContain("Electronics"));
+    expect(screen.getByRole("button", { name: "Electronics" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Books" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Books" }).querySelector("svg"))
+      .toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Books" }));
+    expect(await screen.findByText("No products found in Books.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(await screen.findByRole("heading", { name: testProduct.name }))
+      .toBeInTheDocument();
+    await waitFor(() => expect(requestedCategories.filter((category) => category === null)).toHaveLength(2));
+  });
+
   it("shows 12 products initially and loads another page only when requested", async () => {
     const products = Array.from({ length: 25 }, (_, index) => ({
       ...testProduct,
@@ -114,6 +175,33 @@ describe("product catalog", () => {
       .toBeInTheDocument();
   });
 
+  it("uses semantic search for natural-language product queries", async () => {
+    const semanticProduct = {
+      ...testProduct,
+      id: 3,
+      name: "Noise Cancelling Headphones",
+    };
+    const semanticQueries: string[] = [];
+    server.use(
+      http.get(
+        "http://127.0.0.1:8000/api/products/semantic-search",
+        ({ request }) => {
+          semanticQueries.push(new URL(request.url).searchParams.get("q") ?? "");
+          return HttpResponse.json([semanticProduct]);
+        },
+      ),
+    );
+    renderProducts();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search products" }), {
+      target: { value: "something comfortable for travel" },
+    });
+
+    expect(
+      await screen.findByText("Noise Cancelling Headphones"),
+    ).toBeInTheDocument();
+    expect(semanticQueries).toContain("something comfortable for travel");
+  });
+
   it("shows products for partial search letters as the user types", async () => {
     const wirelessHeadphones = {
       ...testProduct,
@@ -121,13 +209,15 @@ describe("product catalog", () => {
       name: "Wireless Headphones",
     };
     const searchedQueries: string[] = [];
+    const handleSearch = ({ request }: { request: Request }) => {
+      const query = new URL(request.url).searchParams.get("q")?.toLowerCase() ?? "";
+      searchedQueries.push(query);
+      const matches = ["w", "wi", "wire", "wireless", "wireless hea"].includes(query);
+      return HttpResponse.json(matches ? [wirelessHeadphones] : []);
+    };
     server.use(
-      http.get("http://127.0.0.1:8000/api/products/search", ({ request }) => {
-        const query = new URL(request.url).searchParams.get("q")?.toLowerCase() ?? "";
-        searchedQueries.push(query);
-        const matches = ["w", "wi", "wire", "wireless", "wireless hea"].includes(query);
-        return HttpResponse.json(matches ? [wirelessHeadphones] : []);
-      }),
+      http.get("http://127.0.0.1:8000/api/products/search", handleSearch),
+      http.get("http://127.0.0.1:8000/api/products/semantic-search", handleSearch),
     );
     renderProducts();
     const search = screen.getByRole("textbox", { name: "Search products" });

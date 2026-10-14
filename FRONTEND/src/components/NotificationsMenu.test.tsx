@@ -30,8 +30,12 @@ describe("NotificationsMenu", () => {
       </MemoryRouter>
     );
 
+    expect(screen.getByRole("button", { name: /notifications/i }))
+      .toHaveClass("navbar-utility-action", "hover:bg-stone-100", "hover:text-emerald-900");
     await user.click(screen.getByRole("button", { name: /notifications/i }));
     expect(screen.getByRole("region", { name: "Notifications" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Notifications" }))
+      .toHaveClass("notification-panel");
 
     await user.click(screen.getByRole("link", { name: "Account" }));
 

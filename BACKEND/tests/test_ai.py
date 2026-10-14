@@ -6,14 +6,222 @@ from app.ai_service import (
     LLMProvider,
     MIN_AI_PRODUCT_RELEVANCE,
     SYSTEM_PROMPT,
+    catalogue_follow_up_search_context,
     _provider_error_description,
     _provider_error_status,
     _expand_product_synonyms,
     _extract_price_bounds,
     _is_catalog_overview_question,
+    prepare_catalogue_index,
     retrieve_catalog_context,
     stream_completion,
 )
+from app.models import Product
+
+
+class FakeCatalogCollection:
+    def __init__(self):
+        self.ids = []
+        self.documents = []
+        self.metadatas = []
+
+    def get(self, *, include):
+        assert include == []
+        return {"ids": self.ids}
+
+    def upsert(self, *, ids, documents, metadatas):
+        self.ids = ids
+        self.documents = documents
+        self.metadatas = metadatas
+
+    def delete(self, *, ids):
+        self.ids = [item_id for item_id in self.ids if item_id not in ids]
+
+    def query(self, **_kwargs):
+        raise AssertionError("Explicit comparison should use catalogue name matches")
+
+
+def test_catalogue_prepare_endpoint_indexes_active_products(
+    client,
+    auth_headers,
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add(Product(
+        name="Apple iPhone 16",
+        price=799.0,
+        stock=3,
+        is_active=True,
+    ))
+    db.add(Product(
+        name="Inactive Phone",
+        price=99.0,
+        stock=0,
+        is_active=False,
+    ))
+    db.commit()
+    collection = FakeCatalogCollection()
+    monkeypatch.setattr(ai_service, "_catalog_collection", lambda: collection)
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    response = client.post("/api/ai/catalogue/prepare", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"products_loaded": 1}
+    assert collection.ids == [f"product-{db.query(Product).filter_by(name='Apple iPhone 16').one().id}"]
+
+
+def test_comparison_retrieves_each_named_product_group_and_available_iphones(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    products = [
+        Product(name="Apple iPhone 16", price=799.0, stock=5, is_active=True),
+        Product(name="Apple iPhone 16 Pro", price=999.0, stock=2, is_active=True),
+        Product(name="Apple iPhone 15", price=699.0, stock=0, is_active=True),
+        Product(name="Samsung Galaxy S26", price=899.0, stock=4, is_active=True),
+        Product(name="Samsung Galaxy S25", price=799.0, stock=3, is_active=True),
+    ]
+    db.add_all(products)
+    db.commit()
+    collection = FakeCatalogCollection()
+    monkeypatch.setattr(ai_service, "_catalog_collection", lambda: collection)
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    context, sources = retrieve_catalog_context(
+        db,
+        "Compare iPhones available and Samsung Galaxy S26",
+    )
+
+    names = [source["name"] for source in sources]
+    assert names == [
+        "Apple iPhone 16",
+        "Apple iPhone 16 Pro",
+        "Samsung Galaxy S26",
+    ]
+    assert "Catalogue matches for requested item 'iPhones available'" in context
+    assert "Catalogue matches for requested item 'Samsung Galaxy S26'" in context
+    assert "Apple iPhone 15" not in context
+    assert "Samsung Galaxy S25" not in context
+
+
+def test_comparison_between_iphone_and_google_pixel_retrieves_both_products(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add_all([
+        Product(name="Apple iPhone 16", price=799.0, stock=5, is_active=True),
+        Product(name="Google Pixel 9", price=799.0, stock=4, is_active=True),
+        Product(name="Samsung Galaxy S26", price=899.0, stock=3, is_active=True),
+    ])
+    db.commit()
+    collection = FakeCatalogCollection()
+    monkeypatch.setattr(ai_service, "_catalog_collection", lambda: collection)
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    context, sources = retrieve_catalog_context(
+        db,
+        "compare between iphone and google pixel",
+    )
+
+    assert [source["name"] for source in sources] == [
+        "Apple iPhone 16",
+        "Google Pixel 9",
+    ]
+    assert "No matching active products were found." not in context
+
+
+def test_follow_up_search_reuses_previous_product_intent():
+    history = [
+        {"role": "user", "content": "Show me mobiles for photography"},
+        {"role": "assistant", "content": "Here are two current options."},
+    ]
+
+    assert catalogue_follow_up_search_context(
+        "What about cheaper ones?",
+        history,
+    ) == "Show me mobiles for photography"
+    assert catalogue_follow_up_search_context(
+        "Find wireless headphones",
+        history,
+    ) is None
+    assert catalogue_follow_up_search_context("What about those?", []) is None
+
+
+def test_follow_up_context_is_used_for_catalogue_search(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add(Product(
+        name="Affordable Camera",
+        description="Digital camera",
+        price=30000.0,
+        stock=3,
+        is_active=True,
+    ))
+    db.commit()
+    product_id = db.query(Product).filter_by(
+        name="Affordable Camera"
+    ).one().id
+
+    class FakeCollection(FakeCatalogCollection):
+        query_options = None
+
+        def query(self, **kwargs):
+            self.query_options = kwargs
+            return {
+                "documents": [["Affordable Camera"]],
+                "metadatas": [[{
+                    "product_id": product_id,
+                    "name": "Affordable Camera",
+                    "price": 30000.0,
+                    "stock": 3,
+                    "image_url": "",
+                    "category": "Electronics",
+                }]],
+                "distances": [[0.1]],
+            }
+
+    collection = FakeCollection()
+    monkeypatch.setattr(ai_service, "_catalog_collection", lambda: collection)
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    context, sources = retrieve_catalog_context(
+        db,
+        "What about cheaper ones?",
+        search_context="Show me cameras under ₹50,000",
+    )
+
+    assert "Show me cameras under ₹50,000" in collection.query_options["query_texts"][0]
+    assert collection.query_options.get("where") is None
+    assert "Affordable Camera" in context
+    assert [source["name"] for source in sources] == ["Affordable Camera"]
+
+
+def test_prepare_catalogue_index_refreshes_product_snapshot(db, monkeypatch):
+    from app import ai_service
+
+    db.add(Product(
+        name="Samsung Galaxy S26",
+        price=899.0,
+        stock=4,
+        is_active=True,
+    ))
+    db.commit()
+    collection = FakeCatalogCollection()
+    monkeypatch.setattr(ai_service, "_catalog_collection", lambda: collection)
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    assert prepare_catalogue_index(db) == 1
+    assert collection.documents[0].startswith("Product: Samsung Galaxy S26")
 
 
 def test_ai_provider_list_is_authenticated(client, auth_headers, monkeypatch):
@@ -101,6 +309,31 @@ def test_provider_failures_are_classified_without_exposing_error_details():
     assert _provider_error_description(429) == (
         "the provider rate limit or quota was exceeded"
     )
+
+
+def test_streaming_provider_retries_once(monkeypatch):
+    from app import ai_service
+
+    options = {}
+
+    class Runnable:
+        def __or__(self, _other):
+            return self
+
+    def fake_chat_openai(**kwargs):
+        options.update(kwargs)
+        return Runnable()
+
+    monkeypatch.setattr(ai_service, "PROMPT", Runnable())
+    monkeypatch.setattr(ai_service, "ChatOpenAI", fake_chat_openai)
+
+    ai_service._build_chain(
+        LLMProvider("groq", "test-key", "https://example.test", "test-model")
+    )
+
+    assert options["max_retries"] == 1
+    assert options["stream_usage"] is True
+    assert options["max_tokens"] == ai_service.settings.AI_MAX_COMPLETION_TOKENS
 
 
 def test_stream_completion_falls_back_and_reports_attempts(monkeypatch):
@@ -198,6 +431,41 @@ def test_ai_stream_requires_a_configured_provider(client, auth_headers, monkeypa
     assert "No AI provider is configured" in response.json()["detail"]
 
 
+def test_ai_stream_reports_budget_exhaustion_without_fallback(
+    client,
+    auth_headers,
+    monkeypatch,
+):
+    from app.ai_usage import AIQuotaExceeded
+
+    providers = [
+        LLMProvider("groq", "not-returned", "https://groq.example.test", "groq-model"),
+        LLMProvider("gemini", "not-returned", "https://gemini.example.test", "gemini-model"),
+    ]
+    monkeypatch.setattr("app.routers.ai.configured_providers", lambda: providers)
+    monkeypatch.setattr(
+        "app.routers.ai.retrieve_catalog_context",
+        lambda _db, _question: ("", []),
+    )
+
+    async def exhausted_stream(_providers, **_kwargs):
+        raise AIQuotaExceeded(
+            "The daily estimated AI token budget has been reached."
+        )
+        yield "unreachable", None
+
+    monkeypatch.setattr("app.routers.ai.stream_completion", exhausted_stream)
+    response = client.post(
+        "/api/ai/chat/stream",
+        headers=auth_headers,
+        json={"messages": [{"role": "user", "content": "Find a phone"}]},
+    )
+
+    assert response.status_code == 200
+    assert "event: error" in response.text
+    assert "daily estimated AI token budget has been reached" in response.text
+
+
 def test_ai_chat_only_accepts_user_as_latest_message(client, auth_headers, monkeypatch):
     monkeypatch.setattr(
         "app.routers.ai.configured_providers",
@@ -245,6 +513,57 @@ def test_ai_chat_uses_configured_primary_then_fallback_order(
     assert response.status_code == 200
     assert received_provider_order == ["groq", "gemini"]
     assert 'event: provider\ndata: {"name": "gemini"}' in response.text
+
+
+def test_ai_chat_rate_limit_is_scoped_to_authenticated_user(
+    client,
+    auth_headers,
+    test_user,
+    db,
+    monkeypatch,
+):
+    from app.auth import create_access_token, hash_password
+    from app.models import User
+
+    monkeypatch.setattr(
+        "app.routers.ai.configured_providers",
+        lambda: [LLMProvider("groq", "not-returned", "https://example.test", "test-model")],
+    )
+    monkeypatch.setattr(
+        "app.routers.ai.retrieve_catalog_context",
+        lambda _db, _question: ("", []),
+    )
+
+    async def fake_stream(_providers, **_kwargs):
+        yield "groq", "Answer"
+
+    monkeypatch.setattr("app.routers.ai.stream_completion", fake_stream)
+    payload = {"messages": [{"role": "user", "content": "Find a phone"}]}
+    responses = [
+        client.post("/api/ai/chat/stream", headers=auth_headers, json=payload)
+        for _ in range(11)
+    ]
+    assert [response.status_code for response in responses[:10]] == [200] * 10
+    assert responses[-1].status_code == 429
+
+    other_user = User(
+        name="Another User",
+        email="another-rate-limit@example.com",
+        hashed_password=hash_password("password123"),
+        is_active=True,
+    )
+    db.add(other_user)
+    db.commit()
+    db.refresh(other_user)
+    other_headers = {
+        "Authorization": f"Bearer {create_access_token({'sub': str(other_user.id)})}"
+    }
+    other_response = client.post(
+        "/api/ai/chat/stream",
+        headers=other_headers,
+        json=payload,
+    )
+    assert other_response.status_code == 200
 
 
 def test_configured_provider_order_is_always_groq_then_gemini(monkeypatch):
@@ -386,7 +705,7 @@ def test_catalog_overview_uses_live_products_instead_of_similarity_search(monkey
     assert "Travel Laptop" in context
     assert "Wireless Headphones" in context
     assert "Portable notebook computer" in context
-    assert "no separate category field" in context
+    assert "Use the supplied category when present" in context
     assert requested_limit == 101
     assert sources == []
     assert _is_catalog_overview_question(
@@ -395,6 +714,100 @@ def test_catalog_overview_uses_live_products_instead_of_similarity_search(monkey
     assert _is_catalog_overview_question(
         "WHICH TYPE LO PRODUCTS ARE AVAILABLE IN SHOPHUB"
     )
+
+
+def test_book_category_question_returns_only_active_book_catalogue_items(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add_all([
+        Product(
+            name="Muruga: The Lord of War, the God of Wisdom",
+            description="A book about Muruga.",
+            category="Books",
+            price=499.0,
+            stock=2,
+            is_active=True,
+        ),
+        Product(
+            name="Believe: What Life and Cricket Taught Me",
+            description="A memoir about life and cricket.",
+            category="Books",
+            price=599.0,
+            stock=0,
+            is_active=True,
+        ),
+        Product(
+            name="Samsung Galaxy S26",
+            description="Android smartphone.",
+            category="Electronics",
+            price=89999.0,
+            stock=30,
+            is_active=True,
+        ),
+    ])
+    db.commit()
+    monkeypatch.setattr(
+        ai_service,
+        "_catalog_collection",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("A category lookup must not use vector similarity.")
+        ),
+    )
+
+    context, sources = retrieve_catalog_context(
+        db,
+        "which books are available in shophub",
+    )
+
+    assert [source["name"] for source in sources] == [
+        "Muruga: The Lord of War, the God of Wisdom",
+    ]
+    assert all(source["category"] == "Books" for source in sources)
+    assert "Active products in the Books category" in context
+    assert "Samsung Galaxy S26" not in context
+
+
+def test_category_browse_uses_live_catalogue_categories_not_a_fixed_alias_list(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add_all([
+        Product(
+            name="Board Game",
+            category="Toys & Games",
+            price=25,
+            stock=2,
+            is_active=True,
+        ),
+        Product(
+            name="Bluetooth Speaker",
+            category="Electronics",
+            price=40,
+            stock=3,
+            is_active=True,
+        ),
+    ])
+    db.commit()
+    monkeypatch.setattr(
+        ai_service,
+        "_catalog_collection",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("A category lookup must not use vector similarity.")
+        ),
+    )
+
+    _context, sources = retrieve_catalog_context(
+        db,
+        "what toys do you have?",
+    )
+
+    assert [source["name"] for source in sources] == ["Board Game"]
+    assert sources[0]["category"] == "Toys & Games"
 
 
 def test_price_bounds_parse_rupees_ranges_and_k_suffixes():
@@ -472,6 +885,322 @@ def test_mobile_query_matches_products_in_exact_requested_price_range(monkeypatc
     assert "Premium Smartphone" not in context
     assert "Laptop" not in context
     assert [source["product_id"] for source in sources] == [31]
+
+
+def test_mobile_query_returns_matching_catalogue_products_without_vector_match(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add_all([
+        Product(
+            name="Apple iPhone 16",
+            description="Smartphone with an advanced camera",
+            features="Rear Camera: 48MP",
+            price=799.0,
+            stock=4,
+            is_active=True,
+        ),
+        Product(
+            name="Samsung Galaxy S26",
+            description="Android smartphone with a large display",
+            features="Rear Camera: 50MP",
+            price=899.0,
+            stock=3,
+            is_active=True,
+        ),
+        Product(
+            name="Wireless Headphones",
+            description="Over-ear audio headset",
+            price=99.0,
+            stock=8,
+            is_active=True,
+        ),
+    ])
+    db.commit()
+    collection = FakeCatalogCollection()
+    monkeypatch.setattr(ai_service, "_catalog_collection", lambda: collection)
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    context, sources = retrieve_catalog_context(db, "Show me mobiles")
+
+    assert [source["name"] for source in sources] == [
+        "Apple iPhone 16",
+        "Samsung Galaxy S26",
+    ]
+    assert "Wireless Headphones" not in context
+
+
+def test_mobile_search_excludes_printers_and_keeps_phone_matches(db, monkeypatch):
+    from app import ai_service
+
+    db.add_all([
+        Product(
+            name="HP Smart Tank 790 All-in-One",
+            description="Print from a mobile phone using the wireless app.",
+            features=(
+                "Printer Type: Ink-tank multifunction printer\n"
+                "Mobile Printing: HP Smart app support"
+            ),
+            category="Electronics",
+            price=29000.0,
+            stock=10,
+            is_active=True,
+        ),
+        Product(
+            name="iPhone 18 Pro Max",
+            description="Premium smartphone with an advanced camera.",
+            price=3000.0,
+            stock=18,
+            is_active=True,
+        ),
+        Product(
+            name="Apple iPhone 15",
+            description="Smartphone with a high-resolution camera.",
+            price=69999.0,
+            stock=25,
+            is_active=True,
+        ),
+        Product(
+            name="OnePlus 12",
+            description="Android smartphone with a bright display.",
+            price=64999.0,
+            stock=20,
+            is_active=True,
+        ),
+        Product(
+            name="Google Pixel 9",
+            description="Smartphone with Google Tensor processor.",
+            price=79999.0,
+            stock=18,
+            is_active=True,
+        ),
+        Product(
+            name="Samsung Galaxy S26",
+            description="Android smartphone with a large display.",
+            features="Brand: Samsung\nModel: Galaxy S26",
+            price=89999.0,
+            stock=30,
+            is_active=True,
+        ),
+        Product(
+            name="Samsung Galaxy S26",
+            description="Android smartphone with a large display.",
+            price=89999.0,
+            stock=12,
+            is_active=True,
+        ),
+    ])
+    db.commit()
+    collection = FakeCatalogCollection()
+    monkeypatch.setattr(ai_service, "_catalog_collection", lambda: collection)
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    context, sources = retrieve_catalog_context(db, "Show me mobiles")
+
+    names = [source["name"] for source in sources]
+    assert "HP Smart Tank 790 All-in-One" not in names
+    assert "Samsung Galaxy S26" in names
+    assert len(names) == 5
+    assert "mobile phone using the wireless app" not in context
+
+
+def test_mobile_search_applies_misspelled_processor_and_price_constraints(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add_all([
+        Product(
+            name="iPhone 18 Pro Max",
+            features="Processor: Apple A20 Pro",
+            category="Electronics",
+            price=3000,
+            stock=18,
+            is_active=True,
+        ),
+        Product(
+            name="OnePlus 12",
+            features="Processor: Qualcomm Snapdragon 8 Gen 3",
+            category="Electronics",
+            price=64999,
+            stock=20,
+            is_active=True,
+        ),
+        Product(
+            name="Samsung Galaxy S26",
+            features="Processor: Snapdragon 8 Elite Gen 5 or Exynos 2600",
+            category="Electronics",
+            price=74999,
+            stock=30,
+            is_active=True,
+        ),
+        Product(
+            name="HP Smart Tank 790 All-in-One",
+            features="Printer Type: Ink-tank printer\nMobile Printing: Supported",
+            category="Electronics",
+            price=10000,
+            stock=10,
+            is_active=True,
+        ),
+    ])
+    db.commit()
+    monkeypatch.setattr(
+        ai_service,
+        "_catalog_collection",
+        lambda: FakeCatalogCollection(),
+    )
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    context, sources = retrieve_catalog_context(
+        db,
+        "suggest mobiles under 15000 with qualcum processor",
+    )
+
+    assert sources == []
+    assert "No active mobile phones under 15,000" in context
+
+    _context, sources = retrieve_catalog_context(
+        db,
+        "suggest mobiles under 80000 with Qualcomm processor",
+    )
+
+    assert [source["name"] for source in sources] == [
+        "OnePlus 12",
+        "Samsung Galaxy S26",
+    ]
+    assert all(source["price"] < 80000 for source in sources)
+
+
+def test_catalogue_search_matches_misspelled_feature_terms_and_price_bounds(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add_all([
+        Product(
+            name="Nikon Mirrorless Camera",
+            description="A compact camera for travel photography.",
+            features="Optical Image Stabilization: Yes",
+            category="Cameras",
+            price=45000,
+            stock=5,
+            is_active=True,
+        ),
+        Product(
+            name="Sony Premium Camera",
+            description="A professional camera with optical image stabilization.",
+            features="Optical Image Stabilization: Yes",
+            category="Cameras",
+            price=85000,
+            stock=2,
+            is_active=True,
+        ),
+        Product(
+            name="Wireless Speaker",
+            description="Portable Bluetooth speaker.",
+            features="Wireless connectivity",
+            category="Electronics",
+            price=5000,
+            stock=12,
+            is_active=True,
+        ),
+    ])
+    db.commit()
+    monkeypatch.setattr(
+        ai_service,
+        "_catalog_collection",
+        lambda: FakeCatalogCollection(),
+    )
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    _context, sources = retrieve_catalog_context(
+        db,
+        "recommend a camera with optical stablization under 50000",
+    )
+
+    assert [source["name"] for source in sources] == ["Nikon Mirrorless Camera"]
+
+
+def test_catalogue_search_does_not_treat_phone_brand_as_processor_filter(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add(Product(
+        name="Samsung Galaxy S26",
+        description="Android smartphone with a bright display.",
+        category="Electronics",
+        price=74999,
+        stock=8,
+        is_active=True,
+    ))
+    db.commit()
+    monkeypatch.setattr(
+        ai_service,
+        "_catalog_collection",
+        lambda: FakeCatalogCollection(),
+    )
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    _context, sources = retrieve_catalog_context(
+        db,
+        "show Samsung Galaxy S26",
+    )
+
+    assert [source["name"] for source in sources] == ["Samsung Galaxy S26"]
+
+
+def test_mobile_vector_search_does_not_cite_printer_matching_mobile_printing(
+    db,
+    monkeypatch,
+):
+    from app import ai_service
+
+    db.add(Product(
+        name="HP Smart Tank 790 All-in-One",
+        description="Print from a mobile phone using the wireless app.",
+        features=(
+            "Printer Type: Ink-tank multifunction printer\n"
+            "Mobile Printing: HP Smart app support"
+        ),
+        category="Electronics",
+        price=29000.0,
+        stock=10,
+        is_active=True,
+    ))
+    db.commit()
+    product_id = db.query(Product).filter_by(
+        name="HP Smart Tank 790 All-in-One"
+    ).one().id
+
+    class FakeCollection(FakeCatalogCollection):
+        def query(self, **_kwargs):
+            return {
+                "documents": [["Product: HP Smart Tank 790 All-in-One"]],
+                "metadatas": [[{
+                    "product_id": product_id,
+                    "name": "HP Smart Tank 790 All-in-One",
+                    "price": 29000.0,
+                    "stock": 10,
+                    "image_url": "",
+                    "category": "Electronics",
+                }]],
+                "distances": [[0.1]],
+            }
+
+    collection = FakeCollection()
+    monkeypatch.setattr(ai_service, "_catalog_collection", lambda: collection)
+    monkeypatch.setattr(ai_service, "_indexed_signature", None)
+
+    context, sources = retrieve_catalog_context(db, "Show me smartphones")
+
+    assert context == ""
+    assert sources == []
 
 
 def test_price_range_is_applied_to_chroma_query_and_results(monkeypatch):

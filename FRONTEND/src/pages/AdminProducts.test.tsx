@@ -28,6 +28,8 @@ describe("admin product image URLs", () => {
       ...testProduct,
       id: 2,
       name: "URL image headphones",
+      features: "Noise cancellation",
+      category: "Electronics",
       image_url: imageUrl,
     };
     let submittedPayload: Record<string, unknown> | undefined;
@@ -49,6 +51,12 @@ describe("admin product image URLs", () => {
     fireEvent.change(screen.getByLabelText("Stock"), {
       target: { value: "3" },
     });
+    fireEvent.change(screen.getByLabelText("Features"), {
+      target: { value: "Noise cancellation" },
+    });
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "Electronics" },
+    });
     fireEvent.change(screen.getByLabelText("Or use a public image URL"), {
       target: { value: imageUrl },
     });
@@ -59,8 +67,162 @@ describe("admin product image URLs", () => {
 
     await waitFor(() => {
       expect(submittedPayload?.image_url).toBe(imageUrl);
+      expect(submittedPayload?.features).toBe("Noise cancellation");
+      expect(submittedPayload?.category).toBe("Electronics");
     });
     expect(await screen.findByRole("status")).toHaveTextContent("Product created.");
+  });
+});
+
+describe("admin product form", () => {
+  it("requires the admin to select a category manually", async () => {
+    renderAdminProducts();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Wireless headphones" },
+    });
+    fireEvent.change(screen.getByLabelText("Price"), {
+      target: { value: "49.99" },
+    });
+    fireEvent.change(screen.getByLabelText("Stock"), {
+      target: { value: "4" },
+    });
+    const category = screen.getByRole("combobox");
+    expect(category).toBeRequired();
+    const form = screen.getByRole("button", { name: "Create product" }).closest("form");
+    if (!form) throw new Error("Product form was not rendered.");
+    fireEvent.submit(form);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose a product category.");
+  });
+
+  it("generates a moderated description from the product name and features", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    server.use(
+      http.post("http://127.0.0.1:8000/api/ai/product-description", async ({ request }) => {
+        requestBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({
+          description: "Comfortable wireless headphones for everyday listening.",
+          provider: "groq",
+          cached: false,
+        });
+      }),
+    );
+    renderAdminProducts();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Wireless headphones" },
+    });
+    fireEvent.change(screen.getByLabelText("Price"), {
+      target: { value: "49.99" },
+    });
+    fireEvent.change(screen.getByLabelText("Features"), {
+      target: { value: "Bluetooth audio\nWireless design" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate with AI" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Description")).toHaveValue(
+        "Comfortable wireless headphones for everyday listening.",
+      );
+    });
+    expect(requestBody).toEqual({
+      product_name: "Wireless headphones",
+      price: 49.99,
+      features: "Bluetooth audio\nWireless design",
+    });
+    expect(screen.getByText(/passed content moderation/)).toBeInTheDocument();
+  });
+
+  it("does not generate a description from numeric-only features", async () => {
+    let descriptionRequestSent = false;
+    server.use(
+      http.post("http://127.0.0.1:8000/api/ai/product-description", () => {
+        descriptionRequestSent = true;
+        return HttpResponse.json({
+          description: "Generated description",
+          provider: "groq",
+          cached: false,
+        });
+      }),
+    );
+    renderAdminProducts();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Wireless headphones" },
+    });
+    fireEvent.change(screen.getByLabelText("Price"), {
+      target: { value: "49.99" },
+    });
+    fireEvent.change(screen.getByLabelText("Features"), {
+      target: { value: "40 2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate with AI" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Add at least one descriptive product feature",
+    );
+    expect(descriptionRequestSent).toBe(false);
+  });
+
+  it("shows a moderation rejection so an administrator can revise the description", async () => {
+    server.use(
+      http.post("http://127.0.0.1:8000/api/ai/moderate", () =>
+        HttpResponse.json({
+          approved: false,
+          reason: "Contains unsafe language.",
+          provider: "gemini",
+          cached: false,
+        }),
+      ),
+    );
+    renderAdminProducts();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Wireless headphones" },
+    });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "A description that needs review" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review with AI" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Contains unsafe language.");
+    expect(screen.getByText(/Description needs revision/)).toBeInTheDocument();
+  });
+
+  it("does not save a product when AI moderation rejects its description", async () => {
+    let productSaveRequested = false;
+    server.use(
+      http.post("http://127.0.0.1:8000/api/ai/moderate", () =>
+        HttpResponse.json({
+          approved: false,
+          reason: "Contains unsafe language.",
+          provider: "groq",
+          cached: false,
+        }),
+      ),
+      http.post("http://127.0.0.1:8000/api/products/", () => {
+        productSaveRequested = true;
+        return HttpResponse.json(testProduct);
+      }),
+    );
+    renderAdminProducts();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Wireless headphones" },
+    });
+    fireEvent.change(screen.getByLabelText("Price"), {
+      target: { value: "49.99" },
+    });
+    fireEvent.change(screen.getByLabelText("Stock"), {
+      target: { value: "4" },
+    });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "A description that needs review" },
+    });
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "Electronics" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create product" }));
+
+    expect(await screen.findByText(/The description needs revision/)).toBeInTheDocument();
+    expect(productSaveRequested).toBe(false);
   });
 });
 

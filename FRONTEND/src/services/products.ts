@@ -7,11 +7,16 @@ import type {
 } from "../types";
 
 export const getProducts = async (
-  { skip, limit }: ProductPageParams = {}
+  { skip, limit, category }: ProductPageParams = {}
 ): Promise<Product[]> => {
   const { data } = await api.get<Product[]>("/products/", {
-    params: { skip, limit },
+    params: { skip, limit, category },
   });
+  return data;
+};
+
+export const getProductCategories = async (): Promise<string[]> => {
+  const { data } = await api.get<string[]>("/products/categories");
   return data;
 };
 
@@ -22,9 +27,23 @@ export const getProduct = async (id: string | number): Promise<Product> => {
 
 export const searchProducts = async (
   query: string,
+  category?: string,
 ): Promise<Product[]> => {
   const { data } = await api.get<Product[]>("/products/search", {
-    params: { q: query, limit: 100 },
+    params: { q: query, limit: 100, category },
+  });
+  return data;
+};
+
+export const semanticSearchProducts = async (
+  query: string,
+  category?: string,
+): Promise<Product[]> => {
+  if (query.trim().length < 3) {
+    return searchProducts(query, category);
+  }
+  const { data } = await api.get<Product[]>("/products/semantic-search", {
+    params: { q: query, limit: 100, category },
   });
   return data;
 };

@@ -2,6 +2,41 @@
 
 React + TypeScript + Vite + Tailwind CSS + Axios + React Router.
 
+## Platform-neutral container preview
+
+The repository includes a Docker Compose stack for a single Docker host. It
+builds the frontend and API, runs PostgreSQL and Redis, applies Alembic
+migrations, and starts the Celery worker and Beat scheduler. The worker handles
+invoice and product CSV import jobs; Beat is ready to dispatch any periodic
+tasks configured by the application. Product-description generation remains
+synchronous.
+
+Copy `.env.deploy.example` to `.env.deploy`, set a unique URL-safe random
+database password and two different strong JWT secrets, then run from the
+repository root:
+
+```powershell
+Copy-Item .env.deploy.example .env.deploy
+docker compose --env-file .env.deploy config
+docker compose --env-file .env.deploy up --build -d
+```
+
+Open `http://localhost:8080`. Check service status and logs with
+`docker compose --env-file .env.deploy ps` and
+`docker compose --env-file .env.deploy logs -f api worker beat migrate`.
+The API readiness endpoint is `/healthz`. Stop the local stack with
+`docker compose --env-file .env.deploy down`; persistent database, Redis,
+uploads, and ChromaDB data are stored in named Docker volumes and are preserved.
+Do not add `-v` when stopping the stack unless you intend to delete those data
+volumes.
+
+This is a portable starting point, not a production deployment or a platform
+selection. The stack exposes plain HTTP on the configured `HTTP_PORT` and must
+sit behind HTTPS for public use. Hosting on a multi-service platform may
+require adapting the Compose volumes to that platform's shared/object storage
+and configuring production secrets, domains, backups, alerts, and rollback
+procedures there.
+
 ## 1. Start the FastAPI backend
 
 From the `BACKEND` folder:
@@ -20,6 +55,41 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 Backend: `http://127.0.0.1:8000`
+
+## AI catalogue tools
+
+The authenticated admin product form generates a description from a product
+name, price, and seller-provided features. Generated text is moderated before
+it is returned. Product saves with a description are also checked; rejected
+text is blocked. If the moderation provider is unavailable, an administrator
+can retry or explicitly choose to save without the AI review. Product
+categories are selected manually from the supported category list.
+
+The product storefront uses ChromaDB embeddings for natural-language queries
+of three or more characters, filtered by the selected category; shorter
+partial queries keep the PostgreSQL prefix/typo-tolerant search. The
+authenticated product assistant also supports semantic catalogue retrieval
+and an optional tool-using agent. The agent can search the live catalogue and
+retrieve individual product details. AI chat, description generation,
+moderation, and agent requests are limited to 10 requests per user per minute. Provider calls also share atomically reserved daily global budgets in Redis:
+`AI_DAILY_PROVIDER_CALL_LIMIT` (default 100 attempts) and
+`AI_DAILY_ESTIMATED_TOKEN_LIMIT` (default 300,000 estimated tokens). Each
+provider call conservatively estimates prompt usage at roughly one token per
+three input characters, then reserves that estimate plus
+`AI_MAX_COMPLETION_TOKENS` (default 2,048); successful requests reconcile to
+provider-reported token usage when available, while failed requests keep their
+reservation to account conservatively for uncertain billing. Admins can view
+totals by provider, model, feature, outcome, and cache hits on the Background
+jobs page. Estimates are guardrails, not provider billing totals or a guarantee
+of $0 spend. Configure hard provider-side quotas/spend limits and usage alerts
+in the Groq and Google AI/Gemini accounts; these account-level controls must be
+set by an account owner and are not configured by the application.
+
+Groq and Gemini keys configure the primary and fallback chat providers in
+`BACKEND/.env`. Redis caches generated descriptions, moderation results, and
+agent answers; cache entries use `AI_RESPONSE_CACHE_TTL_SECONDS` (default one
+hour). The streamed chat endpoint remains uncached so it can deliver tokens
+immediately.
 
 Run Redis and the Celery worker in separate terminals. For example, start a
 local Redis container with Docker:
@@ -305,16 +375,19 @@ default Groq model is `qwen/qwen3.8-27b`; Groq retired
 `llama-3.3-70b-versatile` on August 16, 2026, and its initial replacement
 `qwen/qwen3.6-27b` was retired on September 14, 2026. The provider badge shows
 `Groq · active` by default and changes to `Gemini · fallback active` only when
-Gemini handles a request. The API retrieves relevant active catalogue products
-from ChromaDB and includes product citations with streamed answers over
-Server-Sent Events. On first use, the embedding model may need to be downloaded;
+Gemini handles a request. The API retrieves relevant active catalogue products—including seller-entered
+features and category—from ChromaDB and includes product citations with
+streamed answers over Server-Sent Events. Opening the chat prepares the active
+catalogue index before the first question is enabled. Requests that compare
+named products retrieve each matching product-name group separately (for
+example, available iPhones and a named Samsung Galaxy model). On first use, the
+embedding model may need to be downloaded;
 ensure the backend has network access and writable storage at
 `CHROMA_PERSIST_DIRECTORY` (defaults to `BACKEND/app/vector_store`).
-Catalogue/category overview questions use up to 100 active product names and
-descriptions directly from the database instead of waiting for a ChromaDB
-similarity search. The product schema has no dedicated category field, so the
-assistant infers categories only when they are evident from those records and
-labels the context as a sample when more than 100 active products exist.
+Catalogue/category overview questions use up to 100 active product names,
+categories, features, and descriptions directly from the database instead of
+waiting for a ChromaDB similarity search; the context is labelled as a sample
+when more than 100 active products exist.
 The assistant recognizes common category synonyms (such as mobile, phone, and
 smartphone). Explicit price ranges and limits are also applied as exact
 catalogue-price filters before products are passed to the model, so it can
@@ -323,8 +396,8 @@ recommend only products within the requested budget.
 Install backend dependencies from `BACKEND` and restart the API after
 configuring provider keys. If no provider is configured, the assistant reports
 that configuration is missing rather than returning an ungrounded answer. The
-first Chroma use may take longer while its embedding model is downloaded and
-the product index is built; the downloaded model is cached for later use.
+first catalogue preparation may take longer while its embedding model is
+downloaded and the index is built; the downloaded model is cached for later use.
 
 ## Routes
 

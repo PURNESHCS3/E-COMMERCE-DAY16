@@ -112,7 +112,7 @@ export const getWebSocketUrl = (): string => {
   const configuredUrl = import.meta.env.VITE_WS_URL;
   if (configuredUrl) return configuredUrl;
 
-  const apiUrl = new URL(API_URL);
+  const apiUrl = new URL(API_URL, window.location.origin);
   apiUrl.protocol = apiUrl.protocol === "https:" ? "wss:" : "ws:";
   apiUrl.pathname = `${apiUrl.pathname.replace(/\/$/, "")}/ws`;
   apiUrl.search = "";

@@ -1,5 +1,13 @@
 import api, { API_URL } from "./api";
-import type { AIChatMessage, AIProductSource, AIProviderInfo } from "../types";
+import type {
+  AIChatMessage,
+  AIContentModerationResponse,
+  AIProductAgentResponse,
+  AIProductDescriptionResponse,
+  AIProductSource,
+  AIProviderInfo,
+  AIUsageReport,
+} from "../types";
 
 interface AIProviderResponse {
   providers: AIProviderInfo[];
@@ -71,6 +79,50 @@ export function clearAIChatHistory(): void {
 export async function getAIProviders(): Promise<AIProviderInfo[]> {
   const { data } = await api.get<AIProviderResponse>("/ai/providers");
   return data.providers;
+}
+
+export async function getAIUsage(): Promise<AIUsageReport> {
+  const { data } = await api.get<AIUsageReport>("/ai/usage");
+  return data;
+}
+
+export async function prepareAICatalogue(): Promise<number> {
+  const { data } = await api.post<{ products_loaded: number }>(
+    "/ai/catalogue/prepare",
+  );
+  return data.products_loaded;
+}
+
+export async function generateAIProductDescription(input: {
+  product_name: string;
+  price: number;
+  features: string;
+}): Promise<AIProductDescriptionResponse> {
+  const { data } = await api.post<AIProductDescriptionResponse>(
+    "/ai/product-description",
+    input,
+  );
+  return data;
+}
+
+export async function moderateAIProductContent(input: {
+  product_name: string;
+  content: string;
+}): Promise<AIContentModerationResponse> {
+  const { data } = await api.post<AIContentModerationResponse>("/ai/moderate", input);
+  return data;
+}
+
+export async function runAIProductAgent(
+  messages: AIChatMessage[],
+  signal?: AbortSignal,
+): Promise<AIProductAgentResponse> {
+  const { data } = await api.post<AIProductAgentResponse>(
+    "/ai/agent",
+    { messages },
+    { signal },
+  );
+  return data;
 }
 
 function parseEventFrame(frame: string): AIStreamEvent | null {

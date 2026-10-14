@@ -5,7 +5,7 @@ type CardProps = ComponentProps<"div">;
 type CardTitleProps = ComponentProps<"h2">;
 
 export function Card({ className, ...props }: CardProps) {
-  return <div className={cn("rounded-xl border border-slate-200 bg-white shadow-sm", className)} {...props} />;
+  return <div className={cn("rounded-2xl border border-stone-200 bg-white shadow-sm", className)} {...props} />;
 }
 
 export function CardHeader({ className, ...props }: CardProps) {

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router-dom";
@@ -17,7 +17,82 @@ describe("AIChatWidget", () => {
           { name: "gemini", model: "test-gemini-model" },
         ] }),
       ),
+      http.post("http://127.0.0.1:8000/api/ai/catalogue/prepare", () =>
+        HttpResponse.json({ products_loaded: 10 }),
+      ),
     );
+  });
+
+  it("prepares the catalogue before allowing the first question", async () => {
+    const user = userEvent.setup();
+    let completePreparation: (() => void) | undefined;
+    let chatRequestCount = 0;
+    server.use(
+      http.post("http://127.0.0.1:8000/api/ai/catalogue/prepare", async () => {
+        await new Promise<void>((resolve) => {
+          completePreparation = resolve;
+        });
+        return HttpResponse.json({ products_loaded: 10 });
+      }),
+      http.post("http://127.0.0.1:8000/api/ai/chat/stream", () => {
+        chatRequestCount += 1;
+        return HttpResponse.text("event: done\ndata: {}\n\n", {
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <AIChatWidget />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open AI product assistant" }));
+
+    expect(await screen.findByText(
+      "Welcome to ShopHub! I can help you find products.",
+    )).toBeInTheDocument();
+    expect(chatRequestCount).toBe(0);
+    expect(screen.getByRole("textbox", { name: "Ask about products" })).toBeDisabled();
+    expect(screen.getByText("Preparing product catalogue for your first question…"))
+      .toBeInTheDocument();
+
+    completePreparation?.();
+    const input = screen.getByRole("textbox", { name: "Ask about products" });
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(screen.getByRole("textbox", { name: "Ask about products" }), "Find a lamp");
+    await user.click(screen.getByRole("button", { name: "Send AI chat message" }));
+    await screen.findByText("Find a lamp");
+    expect(chatRequestCount).toBe(1);
+  });
+
+  it("shows current stock with catalogue source links", async () => {
+    sessionStorage.setItem(
+      AI_CHAT_STORAGE_KEY,
+      JSON.stringify([{
+        role: "assistant",
+        content: "Here is a current match.",
+        sources: [{
+          product_id: 17,
+          name: "Wireless Headphones",
+          price: 49.99,
+          stock: 4,
+          image_url: null,
+          relevance: 0.92,
+        }],
+      }]),
+    );
+    render(
+      <MemoryRouter>
+        <AIChatWidget />
+      </MemoryRouter>,
+    );
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Open AI product assistant" }));
+
+    expect(await screen.findByRole("link", {
+      name: /Wireless Headphones.*4 in stock/,
+    })).toBeInTheDocument();
   });
 
   it("opens a floating chat box from the bottom-right assistant button", async () => {
@@ -35,8 +110,8 @@ describe("AIChatWidget", () => {
       .toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Ask about products" }))
       .toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Groq · active");
-    expect(screen.queryByRole("button", { name: "Gemini" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("AI assistant · ready");
+    expect(screen.queryByText(/Groq|Gemini/)).not.toBeInTheDocument();
 
     await user.click(
       within(screen.getByRole("region", { name: "ShopHub AI product assistant" }))
@@ -44,6 +119,53 @@ describe("AIChatWidget", () => {
     );
     expect(screen.queryByRole("region", { name: "ShopHub AI product assistant" }))
       .not.toBeInTheDocument();
+  });
+
+  it("runs a product-agent tool call when agent mode is enabled", async () => {
+    const user = userEvent.setup();
+    let requestBody: { messages: Array<{ role: string; content: string }> } | undefined;
+    server.use(
+      http.post("http://127.0.0.1:8000/api/ai/agent", async ({ request }) => {
+        requestBody = await request.json() as typeof requestBody;
+        return HttpResponse.json({
+          answer: "Wireless headphones are in stock. [Product #17]",
+          provider: "groq",
+          sources: [{
+            product_id: 17,
+            name: "Wireless Headphones",
+            price: 49.99,
+            stock: 4,
+            image_url: null,
+            relevance: 0.92,
+          }],
+          tool_calls: ["search_catalog"],
+          cached: false,
+        });
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <AIChatWidget />
+      </MemoryRouter>,
+    );
+    await user.click(screen.getByRole("button", { name: "Open AI product assistant" }));
+    await user.click(screen.getByRole("button", { name: "Toggle product search agent" }));
+    await user.type(screen.getByRole("textbox", { name: "Ask about products" }), "Find headphones");
+    await user.click(screen.getByRole("button", { name: "Send AI chat message" }));
+
+    expect(await screen.findByText("Wireless headphones are in stock. [Product #17]"))
+      .toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Wireless Headphones/ }))
+      .toHaveAttribute("href", "/products/17");
+    expect(requestBody).toEqual({
+      messages: [
+        {
+          role: "assistant",
+          content: "Welcome to ShopHub! I can help you find products.",
+        },
+        { role: "user", content: "Find headphones" },
+      ],
+    });
   });
 
   it("renders Markdown formatting in assistant messages", async () => {
@@ -134,6 +256,10 @@ describe("AIChatWidget", () => {
     await screen.findByText("Try again");
 
     expect(chatRequests[1].messages).toEqual([
+      {
+        role: "assistant",
+        content: "Welcome to ShopHub! I can help you find products.",
+      },
       { role: "user", content: "First question" },
       { role: "user", content: "Try again" },
     ]);
@@ -157,17 +283,24 @@ describe("AIChatWidget", () => {
       </MemoryRouter>,
     );
     await user.click(screen.getByRole("button", { name: "Open AI product assistant" }));
-    await screen.findByText("Groq · active");
-    expect(screen.queryByRole("button", { name: "Groq" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Gemini" })).not.toBeInTheDocument();
+    await screen.findByText("AI assistant · ready");
+    expect(screen.queryByText(/Groq|Gemini/)).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "Ask about products" }), "Test provider order");
     await user.click(screen.getByRole("button", { name: "Send AI chat message" }));
 
     await screen.findByText("Test provider order");
-    expect(requestBody).toEqual({ messages: [{ role: "user", content: "Test provider order" }] });
+    expect(requestBody).toEqual({
+      messages: [
+        {
+          role: "assistant",
+          content: "Welcome to ShopHub! I can help you find products.",
+        },
+        { role: "user", content: "Test provider order" },
+      ],
+    });
   });
 
-  it("reports Gemini as responding after Groq fails", async () => {
+  it("reports the AI assistant as active after provider fallback", async () => {
     const user = userEvent.setup();
     server.use(
       http.post("http://127.0.0.1:8000/api/ai/chat/stream", () =>
@@ -184,15 +317,15 @@ describe("AIChatWidget", () => {
       </MemoryRouter>,
     );
     await user.click(screen.getByRole("button", { name: "Open AI product assistant" }));
-    await screen.findByText("Groq · active");
+    await screen.findByText("AI assistant · ready");
     await user.type(screen.getByRole("textbox", { name: "Ask about products" }), "Test fallback");
     await user.click(screen.getByRole("button", { name: "Send AI chat message" }));
 
-    expect(await screen.findByText("Gemini · fallback active"))
+    expect(await screen.findByText("AI assistant · active"))
       .toBeInTheDocument();
   });
 
-  it("shows which provider is connecting before the first streamed token", async () => {
+  it("shows a thinking status before the first streamed token", async () => {
     const encoder = new TextEncoder();
     server.use(
       http.post("http://127.0.0.1:8000/api/ai/chat/stream", () =>
@@ -220,11 +353,13 @@ describe("AIChatWidget", () => {
       </MemoryRouter>,
     );
     await user.click(screen.getByRole("button", { name: "Open AI product assistant" }));
-    await screen.findByText("Groq · active");
+    await screen.findByText("AI assistant · ready");
     await user.type(screen.getByRole("textbox", { name: "Ask about products" }), "Find a phone");
     await user.click(screen.getByRole("button", { name: "Send AI chat message" }));
 
-    expect(await screen.findByText("Groq · connecting")).toBeInTheDocument();
+    expect(await screen.findByText("Thinking…")).toBeInTheDocument();
+    expect(screen.getByText("Analyzing your request…")).toBeInTheDocument();
+    expect(screen.queryByText(/Groq|Gemini/)).not.toBeInTheDocument();
     expect(await screen.findByText("Ready")).toBeInTheDocument();
   });
 });

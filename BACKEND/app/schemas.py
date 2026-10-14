@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from pydantic import field_validator
 
 from app.image_urls import normalize_product_image_url
+from app.product_categories import PRODUCT_CATEGORIES, normalize_product_category
 
 
 # ============================================================
@@ -88,6 +89,16 @@ class ProductCreate(BaseModel):
         max_length=1000
     )
 
+    features: Optional[str] = Field(
+        default=None,
+        max_length=2000
+    )
+
+    category: Optional[str] = Field(
+        default=None,
+        max_length=80
+    )
+
     price: float = Field(
         ...,
         gt=0
@@ -105,11 +116,24 @@ class ProductCreate(BaseModel):
     def validate_image_url(cls, value: str | None) -> str | None:
         return normalize_product_image_url(value)
 
+    @field_validator("category")
+    @classmethod
+    def validate_category(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        category = normalize_product_category(value)
+        if category is None:
+            allowed = ", ".join(PRODUCT_CATEGORIES)
+            raise ValueError(f"Choose a category from: {allowed}.")
+        return category
+
 
 class ProductResponse(BaseModel):
     id: int
     name: str
     description: Optional[str]
+    features: Optional[str] = None
+    category: Optional[str] = None
     price: float
     stock: int
     image_url: Optional[str]

@@ -35,7 +35,7 @@ export default function NotificationsMenu() {
         aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
         aria-expanded={open}
         onClick={toggle}
-        className="relative rounded-lg p-2 hover:bg-slate-100"
+        className="navbar-utility-action relative rounded-lg p-2 text-slate-700 transition hover:bg-stone-100 hover:text-emerald-900"
       >
         <Bell className="h-4 w-4" />
         {unreadCount > 0 && (
@@ -47,13 +47,13 @@ export default function NotificationsMenu() {
       {open && (
         <section
           aria-label="Notifications"
-          className="absolute right-0 top-11 z-30 w-80 max-w-[calc(100vw-2rem)] rounded-xl border bg-white p-3 text-slate-900 shadow-xl"
+          className="notification-panel absolute right-0 top-11 z-30 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-stone-200 bg-white p-3 text-slate-900 shadow-xl"
         >
           <h2 className="mb-2 font-semibold">Notifications</h2>
           {notifications.length === 0 ? (
             <p className="py-4 text-sm text-slate-500">You’re all caught up.</p>
           ) : (
-            <ul className="max-h-80 space-y-2 overflow-y-auto">
+            <ul className="notification-list max-h-80 space-y-2 overflow-y-auto">
               {notifications.map((notification) => (
                 <li key={notification.id} className="rounded-lg bg-slate-50 p-3">
                   <p className="text-sm font-medium">{notification.title}</p>

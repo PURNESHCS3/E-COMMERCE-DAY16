@@ -1,16 +1,36 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { Search, ShieldCheck, Sparkles } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { createProduct, deleteProduct, getProducts, searchProducts, updateProduct, uploadProductImage } from "../services/products";
+import {
+  generateAIProductDescription,
+  moderateAIProductContent,
+} from "../services/ai";
 import { getApiErrorMessage } from "../lib/apiError";
 import type { Product, ProductPayload } from "../types";
+
+const productCategories = [
+  "Electronics",
+  "Footwear",
+  "Clothing",
+  "Home & Kitchen",
+  "Beauty & Personal Care",
+  "Books",
+  "Sports & Outdoors",
+  "Toys & Games",
+  "Accessories",
+  "Grocery",
+  "Other",
+];
 
 const emptyForm = {
   name: "",
   description: "",
+  features: "",
+  category: "",
   price: "",
   stock: "",
   imageUrl: "",
@@ -74,6 +94,13 @@ export default function AdminProducts() {
   const [imageUrlPreviewLoaded, setImageUrlPreviewLoaded] = useState(false);
   const [imageUrlPreviewFailed, setImageUrlPreviewFailed] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [generatingDescription, setGeneratingDescription] = useState(false);
+  const [reviewingDescription, setReviewingDescription] = useState(false);
+  const [moderationResult, setModerationResult] = useState<{
+    approved: boolean;
+    reason: string;
+  } | null>(null);
+  const [moderationUnavailable, setModerationUnavailable] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -97,6 +124,8 @@ export default function AdminProducts() {
     setForm({
       name: productToEdit.name,
       description: productToEdit.description || "",
+      features: productToEdit.features || "",
+      category: productToEdit.category || "",
       price: String(productToEdit.price),
       stock: String(productToEdit.stock),
       imageUrl: productToEdit.image_url?.startsWith("https://")
@@ -105,8 +134,18 @@ export default function AdminProducts() {
     });
   }
 
-  const updateField = (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const updateField = (
+    event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
+  ) => {
     setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+    if (
+      event.target.name === "name" ||
+      event.target.name === "description" ||
+      event.target.name === "features"
+    ) {
+      setModerationResult(null);
+      setModerationUnavailable(false);
+    }
   };
 
   const resetForm = () => {
@@ -116,7 +155,82 @@ export default function AdminProducts() {
     setImageUrlSelected(false);
     setImageUrlPreviewLoaded(false);
     setImageUrlPreviewFailed(false);
+    setModerationResult(null);
+    setModerationUnavailable(false);
     setFileInputKey((current) => current + 1);
+  };
+
+  const generateDescription = async () => {
+    if (!form.name.trim() || !form.price || Number(form.price) <= 0) {
+      setError("Enter a product name and valid price before generating a description.");
+      return;
+    }
+    if (!Array.from(form.features.trim()).some((character) => character.toLowerCase() !== character.toUpperCase())) {
+      setError("Add at least one descriptive product feature before generating a description.");
+      return;
+    }
+    setGeneratingDescription(true);
+    setError("");
+    setNotice("");
+    setModerationResult(null);
+    setModerationUnavailable(false);
+    try {
+      const result = await generateAIProductDescription({
+        product_name: form.name.trim(),
+        price: Number(form.price),
+        features: form.features.trim(),
+      });
+      setForm((current) => ({ ...current, description: result.description }));
+      setModerationResult({
+        approved: true,
+        reason: "AI-generated description passed content moderation.",
+      });
+      setNotice(
+        result.cached
+          ? "Loaded a previously generated and moderated description from cache."
+          : `Description generated and moderated with ${result.provider}.`,
+      );
+    } catch (requestError: unknown) {
+      setModerationUnavailable(false);
+      setError(getApiErrorMessage(
+        requestError,
+        "Could not generate a description. You can still write one manually.",
+      ));
+    } finally {
+      setGeneratingDescription(false);
+    }
+  };
+
+  const reviewDescription = async () => {
+    if (!form.name.trim() || !form.description.trim()) {
+      setError("Enter a product name and description before requesting a moderation review.");
+      return;
+    }
+    setReviewingDescription(true);
+    setError("");
+    setNotice("");
+    setModerationUnavailable(false);
+    try {
+      const result = await moderateAIProductContent({
+        product_name: form.name.trim(),
+        content: form.description.trim(),
+      });
+      setModerationResult({ approved: result.approved, reason: result.reason });
+      setNotice(
+        result.approved
+          ? `Description passed content moderation with ${result.provider}.`
+          : `Description needs revision: ${result.reason}`,
+      );
+    } catch (requestError: unknown) {
+      setModerationResult(null);
+      setModerationUnavailable(true);
+      setError(getApiErrorMessage(
+        requestError,
+        "AI moderation is unavailable. Retry the review, or deliberately save without AI moderation.",
+      ));
+    } finally {
+      setReviewingDescription(false);
+    }
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -139,9 +253,18 @@ export default function AdminProducts() {
       }
     }
 
+    const category = form.category.trim();
+    if (!category) {
+      setError("Choose a product category.");
+      setSaving(false);
+      return;
+    }
+
     const payload: ProductPayload = {
       name: form.name,
       description: form.description,
+      features: form.features.trim(),
+      category,
       price: Number(form.price),
       stock: Number(form.stock),
       image_url: imageUrlSelected
@@ -150,6 +273,40 @@ export default function AdminProducts() {
           ? products.find((product) => product.id === editingId)?.image_url ?? null
           : null,
     };
+
+    if (payload.description.trim() && moderationResult?.approved === false) {
+      setError(`The description needs revision: ${moderationResult.reason}`);
+      setSaving(false);
+      return;
+    }
+
+    if (payload.description.trim() && moderationResult?.approved !== true) {
+      if (!moderationUnavailable) {
+        setReviewingDescription(true);
+        try {
+          const review = await moderateAIProductContent({
+            product_name: payload.name,
+            content: payload.description,
+          });
+          setModerationResult({ approved: review.approved, reason: review.reason });
+          if (!review.approved) {
+            setError(`The description needs revision: ${review.reason}`);
+            setSaving(false);
+            return;
+          }
+        } catch (reviewError: unknown) {
+          setModerationUnavailable(true);
+          setError(getApiErrorMessage(
+            reviewError,
+            "AI moderation is unavailable. Retry the review, or deliberately save without AI moderation.",
+          ));
+          setSaving(false);
+          return;
+        } finally {
+          setReviewingDescription(false);
+        }
+      }
+    }
 
     const previousProducts = products;
     if (editingId) {
@@ -203,6 +360,8 @@ export default function AdminProducts() {
     setForm({
       name: product.name,
       description: product.description || "",
+      features: product.features || "",
+      category: product.category || "",
       price: String(product.price),
       stock: String(product.stock),
       imageUrl: product.image_url?.startsWith("https://")
@@ -265,9 +424,50 @@ export default function AdminProducts() {
             Stock
             <Input name="stock" type="number" min="0" step="1" value={form.stock} onChange={updateField} required />
           </label>
-          <label className="space-y-1 text-sm font-medium sm:col-span-2">
-            Description
+          <label className="space-y-1 text-sm font-medium">
+            Category
+            <select
+              name="category"
+              value={form.category}
+              onChange={updateField}
+              required
+              aria-describedby="product-category-help"
+              className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+            >
+              <option value="">Choose a category</option>
+              {productCategories.map((category) => (
+                <option key={category} value={category}>{category}</option>
+              ))}
+            </select>
+            <span id="product-category-help" className="block text-xs font-normal text-slate-500">
+              Select the category that best describes this product.
+            </span>
+          </label>
+          <div className="space-y-1 text-sm font-medium sm:col-span-2">
+            <label htmlFor="product-features" className="block">
+              Features
+            </label>
             <textarea
+              id="product-features"
+              name="features"
+              value={form.features}
+              onChange={updateField}
+              maxLength={2000}
+              rows={3}
+              placeholder={"Enter factual product features, one per line\nExample: Bluetooth connectivity"}
+              aria-describedby="product-features-help"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
+            />
+            <p id="product-features-help" className="text-xs font-normal text-slate-500">
+              Add at least one factual feature to generate a description. Avoid unsupported claims.
+            </p>
+          </div>
+          <div className="space-y-1 text-sm font-medium sm:col-span-2">
+            <label htmlFor="product-description" className="block">
+              Description
+            </label>
+            <textarea
+              id="product-description"
               name="description"
               value={form.description}
               onChange={updateField}
@@ -275,7 +475,46 @@ export default function AdminProducts() {
               rows={3}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-200"
             />
-          </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={generatingDescription || reviewingDescription || saving}
+                onClick={() => void generateDescription()}
+              >
+                <Sparkles className="mr-2 h-4 w-4" aria-hidden="true" />
+                {generatingDescription ? "Generating..." : "Generate with AI"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={
+                  !form.name.trim() ||
+                  !form.description.trim() ||
+                  generatingDescription ||
+                  reviewingDescription ||
+                  saving
+                }
+                onClick={() => void reviewDescription()}
+              >
+                <ShieldCheck className="mr-2 h-4 w-4" aria-hidden="true" />
+                {reviewingDescription ? "Reviewing..." : "Review with AI"}
+              </Button>
+              {moderationResult && (
+                <span
+                  role={moderationResult.approved ? "status" : "alert"}
+                  className={`text-xs ${
+                    moderationResult.approved ? "text-green-700" : "text-red-700"
+                  }`}
+                >
+                  {moderationResult.approved ? "Approved" : "Needs revision"}:{" "}
+                  {moderationResult.reason}
+                </span>
+              )}
+            </div>
+          </div>
           <label className="space-y-1 text-sm font-medium sm:col-span-2">
             Upload product image
             <input
@@ -373,7 +612,13 @@ export default function AdminProducts() {
           </div>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          <Button type="submit" disabled={saving}>{saving ? "Saving..." : editingId ? "Save changes" : "Create product"}</Button>
+          <Button type="submit" disabled={saving || reviewingDescription}>
+            {saving
+              ? "Saving..."
+              : moderationUnavailable && form.description.trim()
+                ? "Save without AI moderation"
+                : editingId ? "Save changes" : "Create product"}
+          </Button>
           {editingId && <Button type="button" variant="outline" onClick={resetForm}>Cancel edit</Button>}
         </div>
       </form>

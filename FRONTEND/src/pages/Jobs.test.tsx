@@ -57,6 +57,28 @@ describe("background jobs", () => {
       http.get("http://127.0.0.1:8000/api/jobs/", () =>
         HttpResponse.json([runningJob]),
       ),
+      http.get("http://127.0.0.1:8000/api/ai/usage", () =>
+        HttpResponse.json({
+          date: "2026-10-13",
+          daily_limit: 100,
+          total_requests: 2,
+          remaining_requests: 98,
+          provider_requests: { groq: 2, gemini: 0 },
+          estimated_token_limit: 300000,
+          estimated_tokens_used: 1800,
+          estimated_tokens_remaining: 298200,
+          details: [{
+            provider: "groq",
+            model: "test-model",
+            feature: "description",
+            attempts: 2,
+            successes: 1,
+            failures: 1,
+            cache_hits: 3,
+            estimated_tokens: 1800,
+          }],
+        }),
+      ),
     );
 
     renderJobs();
@@ -68,6 +90,55 @@ describe("background jobs", () => {
     expect(screen.getByRole("heading", { name: "Import products from CSV" }))
       .toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start import" })).toBeDisabled();
+    expect(await screen.findAllByText("1,800")).toHaveLength(2);
+    expect(screen.getByText("Success / failed").closest("table")).toHaveTextContent(
+      "description",
+    );
+  });
+
+  it("hides leftover product-description background jobs", async () => {
+    useAuthStore.setState({
+      user: {
+        id: 7,
+        name: "Store Admin",
+        email: "admin@example.com",
+        is_active: true,
+        role: "admin",
+      },
+      loading: false,
+    });
+    const obsoleteDescriptionJob: BackgroundJob = {
+      ...runningJob,
+      kind: "product_import",
+      message: "Product description queued.",
+      result: null,
+    };
+    server.use(
+      http.get("http://127.0.0.1:8000/api/jobs/", () =>
+        HttpResponse.json([obsoleteDescriptionJob]),
+      ),
+      http.get("http://127.0.0.1:8000/api/ai/usage", () =>
+        HttpResponse.json({
+          date: "2026-10-13",
+          daily_limit: 100,
+          total_requests: 0,
+          remaining_requests: 100,
+          provider_requests: { groq: 0, gemini: 0 },
+          estimated_token_limit: 300000,
+          estimated_tokens_used: 0,
+          estimated_tokens_remaining: 300000,
+          details: [],
+        }),
+      ),
+    );
+
+    renderJobs();
+
+    await waitFor(() => {
+      expect(screen.getByText("You’re all caught up")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Product description queued.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Product CSV import")).not.toBeInTheDocument();
   });
 
   it("submits a CSV import and shows the returned job", async () => {
