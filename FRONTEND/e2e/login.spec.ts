@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { User } from "../src/types";
 
-const apiBase = "http://127.0.0.1:8000/api";
+const apiBase = "**/api";
 const user: User = {
   id: 42,
   name: "Playwright Shopper",
@@ -16,7 +16,7 @@ const tokens = {
 };
 
 async function mockSuccessfulLogin(page: Page) {
-  await page.routeWebSocket(`${apiBase.replace(/^http/, "ws")}/ws`, (socket) => {
+  await page.routeWebSocket("ws://**/api/ws", (socket) => {
     socket.onMessage((message) => {
       const event = JSON.parse(String(message)) as { type?: string };
       if (event.type === "auth") socket.send(JSON.stringify({ type: "auth.ok" }));
@@ -31,6 +31,12 @@ async function mockSuccessfulLogin(page: Page) {
   await page.route(`${apiBase}/cart/`, (route) =>
     route.fulfill({ json: { cart: {} } })
   );
+  await page.route(`${apiBase}/jobs/`, (route) =>
+    route.fulfill({ json: [] })
+  );
+  await page.route(`${apiBase}/ai/providers`, (route) =>
+    route.fulfill({ json: { providers: [] } })
+  );
 }
 
 test.describe("login page", () => {
@@ -42,7 +48,8 @@ test.describe("login page", () => {
     await expect(page.getByPlaceholder("Password")).toBeVisible();
     await expect(page.locator("form").getByRole("button", { name: "Login" })).toBeVisible();
     await expect(
-      page.getByRole("navigation").getByRole("link", { name: "Register" })
+      page.locator("p").filter({ hasText: "Don't have an account?" })
+        .getByRole("link", { name: "Register" }),
     ).toHaveAttribute("href", "/register");
   });
 
@@ -113,7 +120,7 @@ test.describe("login page", () => {
   test("submits credentials, loads the authenticated user, and opens the account", async ({ page }) => {
     let submittedBody: unknown;
     let authorizationHeader: string | undefined;
-    await page.routeWebSocket(`${apiBase.replace(/^http/, "ws")}/ws`, (socket) => {
+    await page.routeWebSocket("ws://**/api/ws", (socket) => {
       socket.onMessage((message) => {
         const event = JSON.parse(String(message)) as { type?: string };
         if (event.type === "auth") socket.send(JSON.stringify({ type: "auth.ok" }));
@@ -130,13 +137,23 @@ test.describe("login page", () => {
     await page.route(`${apiBase}/cart/`, (route) =>
       route.fulfill({ json: { cart: {} } })
     );
+    await page.route(`${apiBase}/jobs/`, (route) =>
+      route.fulfill({ json: [] })
+    );
+    await page.route(`${apiBase}/ai/providers`, (route) =>
+      route.fulfill({ json: { providers: [] } })
+    );
     await page.goto("/login");
     await page.getByPlaceholder("Email").fill(user.email);
     await page.getByPlaceholder("Password").fill("secret123");
     await page.locator("form").getByRole("button", { name: "Login" }).click();
 
+    expect(submittedBody).toEqual({ email: user.email, password: "secret123" });
+    expect(authorizationHeader).toBeDefined();
     await expect(page).toHaveURL(/\/account$/);
-    await expect(page.getByRole("heading", { name: "My Account" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: `Hello, ${user.name.split(" ")[0]}` }),
+    ).toBeVisible();
     expect(submittedBody).toEqual({ email: user.email, password: "secret123" });
     expect(authorizationHeader).toBe("Bearer e2e-access-token");
   });

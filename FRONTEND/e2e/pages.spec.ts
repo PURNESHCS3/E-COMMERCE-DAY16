@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Cart, Order, Product, User } from "../src/types";
 
-const apiBase = "http://127.0.0.1:8000/api";
+const apiBase = "**/api";
 const product: Product = {
   id: 1,
   name: "E2E Headphones",
@@ -51,7 +51,7 @@ const order: Order = {
 
 async function seedSession(page: Page, user: User = customer) {
   let nextMessageId = 501;
-  await page.routeWebSocket(`${apiBase.replace(/^http/, "ws")}/ws`, (socket) => {
+  await page.routeWebSocket("ws://**/api/ws", (socket) => {
     socket.onMessage((message) => {
       const event = JSON.parse(String(message)) as {
         type?: string;
@@ -84,16 +84,29 @@ async function seedSession(page: Page, user: User = customer) {
   await page.route(`${apiBase}/cart/`, (route) =>
     route.fulfill({ json: { cart: {} } })
   );
+  await page.route(`${apiBase}/jobs/`, (route) =>
+    route.fulfill({ json: [] })
+  );
+  await page.route(`${apiBase}/ai/providers`, (route) =>
+    route.fulfill({ json: { providers: [] } })
+  );
 }
 
 test.describe("storefront and protected pages", () => {
   test("catalog searches products and switches the theme", async ({ page }) => {
-    await page.route(`${apiBase}/products/**`, (route) =>
-      route.fulfill({ json: [product, secondProduct] })
-    );
+    await page.route(`${apiBase}/products/**`, (route) => {
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname.endsWith("/categories")) {
+        return route.fulfill({ json: ["Electronics"] });
+      }
+      if (pathname.endsWith("/search") || pathname.endsWith("/semantic-search")) {
+        return route.fulfill({ json: [secondProduct] });
+      }
+      return route.fulfill({ json: [product, secondProduct] });
+    });
     await page.goto("/");
 
-    await expect(page.getByRole("heading", { name: /find your next product/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /find your next favorite/i })).toBeVisible();
     await expect(page.getByRole("heading", { name: product.name })).toBeVisible();
     await expect(page.getByRole("heading", { name: secondProduct.name })).toBeVisible();
     await page.getByRole("textbox", { name: "Search products" }).fill("backpack");
@@ -142,10 +155,13 @@ test.describe("storefront and protected pages", () => {
     await seedSession(page);
     await page.goto("/account");
 
-    await expect(page.getByRole("heading", { name: "My Account" })).toBeVisible();
-    await expect(page.getByText(`Name: ${customer.name}`)).toBeVisible();
-    await expect(page.getByText(`Email: ${customer.email}`)).toBeVisible();
-    await expect(page.getByText("Role: customer")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: `Hello, ${customer.name.split(" ")[0]}` }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: customer.name })).toBeVisible();
+    const profile = page.getByRole("region", { name: customer.name });
+    await expect(profile.getByText(customer.email, { exact: true }).first()).toBeVisible();
+    await expect(profile.getByText("customer", { exact: true })).toBeVisible();
   });
 
   test("customer support sends and displays a live chat message", async ({ page }) => {
@@ -179,7 +195,7 @@ test.describe("storefront and protected pages", () => {
 
     await expect(page.getByRole("heading", { name: "Your cart" })).toBeVisible();
     await expect(page.getByText(product.name)).toBeVisible();
-    await expect(page.getByText("Total ₹1250.00")).toBeVisible();
+    await expect(page.getByText("₹1250.00").last()).toBeVisible();
     await page.getByRole("button", { name: "Remove" }).click();
     await expect(page.getByText("Your cart is empty.")).toBeVisible();
   });
@@ -276,6 +292,16 @@ test.describe("storefront and protected pages", () => {
       }
       await route.fulfill({ json: products });
     });
+    await page.route(`${apiBase}/ai/moderate`, (route) =>
+      route.fulfill({
+        json: {
+          approved: true,
+          reason: "Product description approved.",
+          provider: "test",
+          cached: false,
+        },
+      }),
+    );
     await page.route(`${apiBase}/orders/`, (route) =>
       route.fulfill({ json: [order] })
     );
@@ -285,6 +311,7 @@ test.describe("storefront and protected pages", () => {
     await page.getByLabel("Name").fill("New E2E Product");
     await page.getByLabel("Price").fill("2000");
     await page.getByLabel("Stock").fill("3");
+    await page.getByLabel("Category").selectOption("Electronics");
     await page.getByLabel("Description").fill("A newly created test product");
     await page.getByRole("button", { name: "Create product" }).click();
     await expect(page.getByRole("status")).toHaveText("Product created.");
