@@ -11,15 +11,45 @@ invoice and product CSV import jobs; Beat is ready to dispatch any periodic
 tasks configured by the application. Product-description generation remains
 synchronous.
 
-Copy `.env.deploy.example` to `.env.deploy`, set a unique URL-safe random
-database password and two different strong JWT secrets, then run from the
-repository root:
+For local Compose use, create `.env.deploy` from the example and replace the
+database password and both JWT secrets with unique, URL-safe random values.
+Keep this file out of version control and do not reuse these local credentials
+for a public deployment. Run from the repository root:
 
 ```powershell
-Copy-Item .env.deploy.example .env.deploy
+if (Test-Path .env.deploy) {
+  throw ".env.deploy already exists; refusing to overwrite local secrets."
+}
+function New-LocalSecret {
+  $bytes = New-Object byte[] 32
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  $rng.GetBytes($bytes)
+  $rng.Dispose()
+  [BitConverter]::ToString($bytes).Replace("-", "").ToLowerInvariant()
+}
+$content = Get-Content .env.deploy.example -Raw
+$content = $content.Replace("POSTGRES_PASSWORD=", "POSTGRES_PASSWORD=$(New-LocalSecret)")
+$content = $content.Replace("JWT_SECRET=", "JWT_SECRET=$(New-LocalSecret)")
+$content = $content.Replace("JWT_REFRESH_SECRET=", "JWT_REFRESH_SECRET=$(New-LocalSecret)")
+$utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
+[System.IO.File]::WriteAllText(".env.deploy", $content, $utf8NoBom)
 docker compose --env-file .env.deploy config
 docker compose --env-file .env.deploy up --build -d
 ```
+
+Set `APP_ORIGIN` to the exact browser-facing origin (for example,
+`http://localhost:8080` for local Compose, or `https://shop.example.com` for a
+public deployment). For a public deployment, use fresh secrets, terminate TLS
+at a trusted reverse proxy, restrict access to the host, and arrange backups
+and secret rotation. Optional AI provider keys can be left blank; add them only
+if those provider features are needed.
+
+The current GitHub Actions workflows do not deploy the application or need
+application/database/JWT/AI secrets. CI uses ephemeral service credentials and
+test-only signing keys; the image-publishing workflow uses GitHub's
+automatically provided `GITHUB_TOKEN`. If deployment automation is added later,
+store only the required deployment credentials as GitHub Environment secrets,
+not in workflow files, repository files, or frontend `VITE_*` variables.
 
 Open `http://localhost:8080`. Check service status and logs with
 `docker compose --env-file .env.deploy ps` and
