@@ -11,15 +11,18 @@ invoice and product CSV import jobs; Beat is ready to dispatch any periodic
 tasks configured by the application. Product-description generation remains
 synchronous.
 
-For local Compose use, create `.env.deploy` from the example and replace the
-database password and both JWT secrets with unique, URL-safe random values.
-Keep this file out of version control and do not reuse these local credentials
-for a public deployment. Run from the repository root:
+For local Compose use, create a local-only environment file outside the
+repository (the workspace may be cloud-synced) and generate unique, URL-safe
+random database and JWT secrets. Do not reuse these local credentials for a
+public deployment. Run from the repository root:
 
 ```powershell
-if (Test-Path .env.deploy) {
-  throw ".env.deploy already exists; refusing to overwrite local secrets."
+$envDirectory = Join-Path $env:LOCALAPPDATA "ShopHub"
+$envFile = Join-Path $envDirectory ".env.deploy"
+if (Test-Path $envFile) {
+  throw "$envFile already exists; refusing to overwrite local secrets."
 }
+New-Item -ItemType Directory -Path $envDirectory -Force | Out-Null
 function New-LocalSecret {
   $bytes = New-Object byte[] 32
   $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
@@ -32,9 +35,9 @@ $content = $content.Replace("POSTGRES_PASSWORD=", "POSTGRES_PASSWORD=$(New-Local
 $content = $content.Replace("JWT_SECRET=", "JWT_SECRET=$(New-LocalSecret)")
 $content = $content.Replace("JWT_REFRESH_SECRET=", "JWT_REFRESH_SECRET=$(New-LocalSecret)")
 $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
-[System.IO.File]::WriteAllText(".env.deploy", $content, $utf8NoBom)
-docker compose --env-file .env.deploy config
-docker compose --env-file .env.deploy up --build -d
+[System.IO.File]::WriteAllText($envFile, $content, $utf8NoBom)
+docker compose --env-file $envFile config
+docker compose --env-file $envFile up --build -d
 ```
 
 Set `APP_ORIGIN` to the exact browser-facing origin (for example,
@@ -52,10 +55,12 @@ store only the required deployment credentials as GitHub Environment secrets,
 not in workflow files, repository files, or frontend `VITE_*` variables.
 
 Open `http://localhost:8080`. Check service status and logs with
-`docker compose --env-file .env.deploy ps` and
-`docker compose --env-file .env.deploy logs -f api worker beat migrate`.
-The API readiness endpoint is `/healthz`. Stop the local stack with
-`docker compose --env-file .env.deploy down`; persistent database, Redis,
+`docker compose --env-file $envFile ps` and
+`docker compose --env-file $envFile logs -f api worker beat migrate`.
+Keep `$envFile` set in each PowerShell terminal, or substitute its full path
+from `%LOCALAPPDATA%\ShopHub\.env.deploy`. The API readiness endpoint is
+`/healthz`. Stop the local stack with
+`docker compose --env-file $envFile down`; persistent database, Redis,
 uploads, and ChromaDB data are stored in named Docker volumes and are preserved.
 Do not add `-v` when stopping the stack unless you intend to delete those data
 volumes.
