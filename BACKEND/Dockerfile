@@ -41,9 +41,13 @@ RUN mkdir -p /app/app/uploads/products \
     && useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app
 
+# Pre-download the ChromaDB ONNX embedding model (all-MiniLM-L6-v2, ~22 MB)
+# so that the first semantic-search / AI-chat request never has to download it
+# at runtime and avoids a 502 timeout on Render's free tier.
+RUN python -c "from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2; ONNXMiniLM_L6_V2()"
+
 USER appuser
 
 EXPOSE 8000
 
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
-
