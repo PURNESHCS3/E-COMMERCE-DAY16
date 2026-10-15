@@ -1,3 +1,4 @@
+import os
 from celery import Celery
 
 from app.database import settings
@@ -15,4 +16,7 @@ celery_app.conf.update(
     accept_content=["json"],
     task_serializer="json",
     result_serializer="json",
+    task_always_eager=os.getenv("CELERY_TASK_ALWAYS_EAGER", "true").lower() == "true",
+    task_eager_propagates=True,
 )
+
